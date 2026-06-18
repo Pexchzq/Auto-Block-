@@ -1,0 +1,15 @@
+{
+  "authMode": "local",
+  "requestDelayMinMs": 1500,
+  "requestDelayMaxMs": 3000,
+  "max429Retries": 0,
+  "allowUnverifiedBlockList": true,
+  "applyMode": "balanced",
+  "accountConcurrency": 8,
+  "accountLimit": 0,
+  "validateConcurrency": 10,
+  "perAccountDelayMinMs": 500,
+  "perAccountDelayMaxMs": 900,
+  "cooldownOn429Ms": 12000,
+  "skipBlockListCheck": true
+}

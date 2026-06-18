@@ -1,0 +1,93 @@
+{
+  "excludedUntilAfterDeploy": [
+    "TrueMoney live voucher verification"
+  ],
+  "supabase": {
+    "requiredTables": [
+      "profiles",
+      "wallet_ledger",
+      "jobs",
+      "job_reports",
+      "job_inputs",
+      "payment_vouchers",
+      "worker_nodes",
+      "audit_logs"
+    ],
+    "requiredAuth": [
+      "email_password"
+    ],
+    "requiredSeed": [
+      "admin_profile"
+    ]
+  },
+  "web": {
+    "deployRoot": "web",
+    "requiredEnv": [
+      "NEXT_PUBLIC_APP_ENV",
+      "NEXT_PUBLIC_SITE_URL",
+      "NEXT_PUBLIC_SUPABASE_URL",
+      "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "JOB_INPUT_ENCRYPTION_KEY",
+      "WORKER_API_BASE",
+      "WORKER_API_TOKEN",
+      "PAYMENT_PROVIDER_MODE",
+      "ALLOW_PLACEHOLDER_TOPUP",
+      "MAX_ACTIVE_JOBS_PER_USER"
+    ],
+    "requiredCommands": [
+      "npm run generate:secrets",
+      "npm run lint",
+      "npm run build",
+      "npm run verify:production",
+      "npm run cleanup:expired-inputs"
+    ],
+    "requiredAdminCapabilities": [
+      "view_users",
+      "manual_wallet_adjustment",
+      "cancel_jobs",
+      "view_audit_logs",
+      "cleanup_expired_inputs"
+    ]
+  },
+  "worker": {
+    "deployRoot": "worker",
+    "requiredEnv": [
+      "WORKER_API_TOKEN",
+      "WEB_CALLBACK_BASE",
+      "BLOCKMESH_EXE",
+      "WORKER_WORKSPACE",
+      "WORKER_CONCURRENCY"
+    ],
+    "requiredEndpoints": [
+      "GET /health",
+      "POST /jobs",
+      "GET /jobs/:jobId",
+      "POST /jobs/:jobId/cancel"
+    ],
+    "requiredCommands": [
+      "npm run check",
+      "npm run verify:worker",
+      "npm run self-test"
+    ]
+  },
+  "acceptance": [
+    "User can sign up and log in",
+    "Admin can open /admin",
+    "Admin can list users",
+    "Admin can manually adjust a test user wallet",
+    "Admin can view audit logs for wallet adjustments and job cancellations",
+    "Placeholder self top-up is disabled in production",
+    "Admin manual wallet adjustment writes ledger",
+    "Server-side account counting matches pasted account lines",
+    "Invalid account input is rejected without echoing cookies",
+    "Job confirmation reserves wallet balance",
+    "Active job limit blocks duplicate concurrent submissions",
+    "Worker receives job",
+    "Worker posts status callbacks",
+    "Worker posts final sanitized report",
+    "Failed pairs are refunded",
+    "Reports contain no cookies, passwords, tokens, or CSRF values",
+    "Expired job input account text can be cleaned"
+  ]
+}

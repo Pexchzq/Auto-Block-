@@ -1,0 +1,16 @@
+cookies*.txt
+reports/
+state/
+license/*.token
+node_modules/
+web/.next/
+web/.tools/
+web/.env
+web/.env.local
+web/.env*.local
+web/.next-dev.*.log
+release/
+*.zip
+worker/.env
+worker/.work/
+worker/**/*.log

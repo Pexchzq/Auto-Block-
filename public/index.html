@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Block Mesh Local UI</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Block Mesh</h1>
+        <p>Local Roblox account blocking dashboard</p>
+      </div>
+      <div class="topbar-actions">
+        <a class="doc-link" href="/README.md" target="_blank" rel="noreferrer">Docs</a>
+        <div class="server-pill" id="serverStatus">Checking...</div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <button class="nav active" data-tab="accounts">Accounts</button>
+        <button class="nav" data-tab="run">Validate / Plan / Apply</button>
+        <button class="nav" data-tab="reports">Reports</button>
+        <button class="nav" data-tab="settings">Settings</button>
+      </aside>
+
+      <section class="content">
+        <section class="tab active" id="tab-accounts">
+          <div class="panel">
+            <div class="panel-heading">
+              <div>
+                <h2>Accounts</h2>
+                <p>Paste one account per line. Cookies stay in local <code>cookies.txt</code>.</p>
+              </div>
+              <div class="actions">
+                <button id="refreshAccountsBtn">Refresh</button>
+                <button class="danger" id="clearCookiesBtn">Clear Cookies</button>
+              </div>
+            </div>
+
+            <div class="warning">
+              Roblox cookies are active login sessions. Do not share them. This UI does not send them to any cloud server.
+            </div>
+
+            <label class="field">
+              <span>Account lines</span>
+              <textarea id="cookieInput" spellcheck="false" placeholder="username:password:_|WARNING:-DO-NOT-SHARE-THIS..."></textarea>
+            </label>
+            <div class="actions">
+              <button class="primary" id="saveCookiesBtn">Save Local Cookies</button>
+              <span class="muted" id="saveHint">Textarea clears after save.</span>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-heading">
+              <h2>Loaded Accounts</h2>
+              <span class="metric" id="accountCount">0</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Line</th>
+                    <th>Alias</th>
+                    <th>Cookie</th>
+                  </tr>
+                </thead>
+                <tbody id="accountsTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab" id="tab-run">
+          <div class="grid two">
+            <div class="panel">
+              <h2>Actions</h2>
+              <div class="button-grid">
+                <button class="primary" id="validateBtn">Validate</button>
+                <button id="planBtn">Plan</button>
+                <button class="danger" id="applyBtn">Apply Block Mesh</button>
+              </div>
+              <div class="summary-grid" id="summaryGrid"></div>
+            </div>
+
+            <div class="panel">
+              <h2>Current Job</h2>
+              <div class="actions">
+                <div class="job-state" id="jobState">Idle</div>
+                <button class="danger" id="cancelJobBtn" disabled>Cancel Job</button>
+              </div>
+              <div class="progress">
+                <div id="progressBar"></div>
+              </div>
+              <pre class="log" id="jobLog"></pre>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-heading">
+              <h2>Last Result</h2>
+              <span class="muted" id="lastReportName">No report loaded</span>
+            </div>
+            <pre class="report-preview" id="resultPreview"></pre>
+          </div>
+        </section>
+
+        <section class="tab" id="tab-reports">
+          <div class="grid two">
+            <div class="panel">
+              <div class="panel-heading">
+                <h2>Reports</h2>
+                <button id="refreshReportsBtn">Refresh</button>
+              </div>
+              <div id="reportsList" class="reports-list"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-heading">
+                <h2>Report Detail</h2>
+                <div class="actions">
+                  <button id="retryFailedBtn" disabled>Retry Failed</button>
+                  <button id="exportReportBtn" disabled>Export Sanitized Report</button>
+                </div>
+              </div>
+              <pre class="report-preview" id="reportDetail"></pre>
+            </div>
+          </div>
+        </section>
+
+        <section class="tab" id="tab-settings">
+          <div class="panel">
+            <h2>Settings</h2>
+            <div class="settings-grid">
+              <label class="field">
+                <span>Speed mode</span>
+                <select id="applyMode">
+                  <option value="safe">Safe</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="aggressive">Aggressive</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Account concurrency</span>
+                <input id="accountConcurrency" type="number" min="1" max="20" step="1" />
+              </label>
+              <label class="field">
+                <span>Validate concurrency</span>
+                <input id="validateConcurrency" type="number" min="1" max="50" step="1" />
+              </label>
+              <label class="field">
+                <span>Test account limit</span>
+                <input id="accountLimit" type="number" min="0" step="1" />
+              </label>
+              <label class="field">
+                <span>Minimum request delay (ms)</span>
+                <input id="delayMin" type="number" min="250" step="250" />
+              </label>
+              <label class="field">
+                <span>Maximum request delay (ms)</span>
+                <input id="delayMax" type="number" min="250" step="250" />
+              </label>
+              <label class="field">
+                <span>429 retry count</span>
+                <input id="max429Retries" type="number" min="0" max="10" step="1" />
+              </label>
+              <label class="field">
+                <span>Per-account delay min (ms)</span>
+                <input id="perAccountDelayMin" type="number" min="0" step="100" />
+              </label>
+              <label class="field">
+                <span>Per-account delay max (ms)</span>
+                <input id="perAccountDelayMax" type="number" min="0" step="100" />
+              </label>
+              <label class="field">
+                <span>Cooldown on 429 (ms)</span>
+                <input id="cooldownOn429" type="number" min="0" step="1000" />
+              </label>
+              <label class="check-row">
+                <input id="allowUnverified" type="checkbox" />
+                <span>Allow apply when block list cannot be verified</span>
+              </label>
+              <label class="check-row">
+                <input id="skipBlockListCheck" type="checkbox" />
+                <span>Skip block-list check for faster plan/apply</span>
+              </label>
+            </div>
+            <div class="actions">
+              <button class="primary" id="saveSettingsBtn">Save Settings</button>
+              <span class="muted">Auth mode is local. Payment/login hooks are placeholders for a future hosted service.</span>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="confirmDialog">
+      <form method="dialog" class="dialog-card">
+        <h2>Confirm Apply</h2>
+        <p>This will send real block requests for all directed pairs. Reports will not contain cookies or passwords.</p>
+        <pre class="confirm-summary" id="applyConfirmSummary"></pre>
+        <div class="actions">
+          <button value="cancel">Cancel</button>
+          <button class="danger" value="apply">Apply</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
