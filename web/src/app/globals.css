@@ -440,6 +440,25 @@ button:not(:disabled):hover {
   padding: 10px;
   font-size: 13px;
 }
+.setup-card {
+  display: grid;
+  gap: 14px;
+}
+.env-list {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+}
+.env-list code {
+  display: block;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--cyan);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 
 .console-layout,
 .report-grid {

@@ -162,6 +162,8 @@ export default function Home() {
   const [topUpOpen, setTopUpOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const supabaseEnabled = hasPublicSupabaseConfig();
+  const demoModeAllowed = process.env.NODE_ENV !== "production" || process.env.NEXT_PUBLIC_DEMO_MODE === "1";
+  const productionAuthMissing = !supabaseEnabled && !demoModeAllowed;
 
   const detectedCount = useMemo(() => {
     const lines = accountText
@@ -182,7 +184,12 @@ export default function Home() {
 
   const activityEvents: ActivityEvent[] = useMemo(() => {
     const base: ActivityEvent[] = [
-      { id: "env", tone: supabaseEnabled ? "green" : "gold", label: "AUTH", detail: supabaseEnabled ? "Supabase bridge armed" : "Demo mode active" },
+      {
+        id: "env",
+        tone: supabaseEnabled ? "green" : productionAuthMissing ? "red" : "gold",
+        label: "AUTH",
+        detail: supabaseEnabled ? "Supabase bridge armed" : productionAuthMissing ? "Production auth missing" : "Demo mode active",
+      },
       { id: "quote", tone: quote ? "cyan" : "gold", label: "QUOTE", detail: quote ? `${formatNumber(quote.directedPairs)} pairs priced` : "Awaiting calculation" },
       { id: "wallet", tone: walletBalance > 0 ? "green" : "gold", label: "WALLET", detail: `${formatBaht(walletBalance)} available` },
       { id: "worker", tone: job ? "cyan" : "gold", label: "WORKER", detail: job ? `${job.workerStatus} / ${job.status}` : "No job dispatched" },
@@ -193,7 +200,7 @@ export default function Home() {
       label: event.type.toUpperCase(),
       detail: `${event.label} ${formatBaht(event.amountBaht)}`,
     })));
-  }, [job, quote, supabaseEnabled, walletBalance, walletEvents]);
+  }, [job, productionAuthMissing, quote, supabaseEnabled, walletBalance, walletEvents]);
 
   useEffect(() => {
     try {
@@ -457,6 +464,34 @@ export default function Home() {
     } finally {
       setBusy(null);
     }
+  }
+
+  if (productionAuthMissing) {
+    return (
+      <main className={`app-shell ${theme}`}>
+        <div className="motion-bg" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+        <TopBar
+          authMode={authMode}
+          balance={0}
+          busy={busy}
+          job={job}
+          onAuthMode={setAuthMode}
+          onLogout={logout}
+          onOpenTopUp={() => setTopUpOpen(true)}
+          onProfileOpen={setProfileOpen}
+          onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+          profileOpen={profileOpen}
+          session={session}
+          supabaseEnabled={supabaseEnabled}
+          theme={theme}
+        />
+        <SupabaseSetupGate />
+      </main>
+    );
   }
 
   if (showAuthGate) {
@@ -893,6 +928,46 @@ function AuthGate({
           {authMode === "login" ? "Login" : "Create Account"} <ArrowRight size={18} />
         </button>
       </form>
+    </section>
+  );
+}
+
+function SupabaseSetupGate() {
+  const envKeys = [
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "JOB_INPUT_ENCRYPTION_KEY",
+    "WORKER_API_BASE",
+    "WORKER_API_TOKEN",
+  ];
+
+  return (
+    <section className="auth-gate">
+      <div className="auth-gate-copy">
+        <StatusChip tone="red" label="PRODUCTION SETUP REQUIRED" icon={<AlertTriangle size={14} />} />
+        <h1>Supabase auth is not connected yet.</h1>
+        <p>
+          This deployment is running in production, so demo mode is disabled. Add the required environment variables in
+          Vercel, redeploy, then the Login / Sign Up screen will become active.
+        </p>
+        <div className="auth-feature-strip">
+          <span><Database size={15} /> Supabase Auth</span>
+          <span><LockKeyhole size={15} /> Encrypted job input</span>
+          <span><Radar size={15} /> Worker callback</span>
+        </div>
+      </div>
+
+      <div className="auth-gate-form setup-card">
+        <PanelTitle icon={<ShieldCheck size={18} />} kicker="VERCEL ENV" title="Required Variables" />
+        <div className="env-list">
+          {envKeys.map((key) => <code key={key}>{key}</code>)}
+        </div>
+        <div className="auth-error">
+          <AlertTriangle size={15} />
+          Do not put service role keys or worker tokens in client-side code. Add them only in Vercel Environment Variables.
+        </div>
+      </div>
     </section>
   );
 }
