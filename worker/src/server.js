@@ -89,16 +89,50 @@ function sanitizeReportValue(value, depth = 0) {
   return output;
 }
 
+function nonNegativeInteger(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+}
+
+function normalizePairCounters(input, includeUnaccounted) {
+  const directedPairs = nonNegativeInteger(input.directedPairs);
+  const blocked = Math.min(nonNegativeInteger(input.blocked), directedPairs);
+  const alreadyBlocked = Math.min(
+    nonNegativeInteger(input.alreadyBlocked),
+    directedPairs - blocked,
+  );
+  const reportedFailed = Math.min(
+    nonNegativeInteger(input.failed),
+    directedPairs - blocked - alreadyBlocked,
+  );
+  const failed = includeUnaccounted
+    ? directedPairs - blocked - alreadyBlocked
+    : reportedFailed;
+
+  return {
+    blocked,
+    alreadyBlocked,
+    failed,
+    reportedFailed,
+    unaccountedPairs: includeUnaccounted ? failed - reportedFailed : 0,
+  };
+}
+
 function sanitizeReport(report, fallback) {
   const sanitized = sanitizeReportValue(report || {});
+  const directedPairs = Number(sanitized.directedPairs ?? fallback.directedPairs ?? 0);
+  const counters = normalizePairCounters({
+    directedPairs,
+    blocked: sanitized.blocked,
+    alreadyBlocked: sanitized.alreadyBlocked ?? sanitized.already_blocked,
+    failed: sanitized.failed,
+  }, true);
   const safe = {
     ...sanitized,
     jobId: fallback.jobId,
     accountsUsed: Number(sanitized.accountsUsed ?? sanitized.parsedAccounts ?? fallback.accountCount ?? 0),
-    directedPairs: Number(sanitized.directedPairs ?? fallback.directedPairs ?? 0),
-    blocked: Number(sanitized.blocked ?? 0),
-    alreadyBlocked: Number(sanitized.alreadyBlocked ?? sanitized.already_blocked ?? 0),
-    failed: Number(sanitized.failed ?? 0),
+    directedPairs,
+    ...counters,
     generatedAt: sanitized.generatedAt || new Date().toISOString(),
     secretsPolicy: "report_redaction_enabled",
   };
@@ -204,12 +238,13 @@ async function runJob(job) {
     job.child = child;
 
     const statusTimer = setInterval(() => {
+      const counters = normalizePairCounters(job, false);
       void postCallback(statusUrl, {
         status: job.status === "cancelling" ? "cancelled" : "running",
         workerRegion: "external-node",
-        blocked: job.blocked,
-        alreadyBlocked: job.alreadyBlocked,
-        failed: job.failed,
+        blocked: counters.blocked,
+        alreadyBlocked: counters.alreadyBlocked,
+        failed: counters.failed,
       });
     }, CONFIG.statusIntervalMs);
 

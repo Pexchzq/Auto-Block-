@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { normalizeFinalPairResults } from "@/lib/pair-results";
 import { roundBaht } from "@/lib/pricing";
 import { sanitizeReportValue } from "@/lib/report-sanitizer";
 import { getSupabaseAdmin, hasSupabaseAdminConfig } from "@/lib/supabase-server";
@@ -15,11 +16,6 @@ type WorkerCompleteBody = {
   report?: Record<string, unknown>;
   error?: string;
 };
-
-function safeInteger(value: unknown): number {
-  const numberValue = Number(value || 0);
-  return Number.isFinite(numberValue) && numberValue > 0 ? Math.floor(numberValue) : 0;
-}
 
 export async function POST(request: Request, context: { params: Promise<{ jobId: string }> }) {
   if (!hasSupabaseAdminConfig()) {
@@ -55,9 +51,13 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
     });
   }
 
-  const blocked = safeInteger(body.blocked);
-  const alreadyBlocked = safeInteger(body.alreadyBlocked ?? body.already_blocked);
-  const failed = safeInteger(body.failed);
+  const normalized = normalizeFinalPairResults({
+    directedPairs: job.directed_pairs,
+    blocked: body.blocked,
+    alreadyBlocked: body.alreadyBlocked ?? body.already_blocked,
+    failed: body.failed,
+  });
+  const { blocked, alreadyBlocked, failed } = normalized;
   const pricePerPair = Number(job.price_per_pair_baht || 0);
   const chargedBaht = roundBaht((blocked + alreadyBlocked) * pricePerPair);
   const refundedBaht = roundBaht(failed * pricePerPair);
@@ -74,6 +74,8 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
     blocked,
     alreadyBlocked,
     failed,
+    reportedFailed: normalized.reportedFailed,
+    unaccountedPairs: normalized.unaccountedPairs,
     successRate: blocked + alreadyBlocked + failed > 0
       ? Math.round(((blocked + alreadyBlocked) / (blocked + alreadyBlocked + failed)) * 1000) / 10
       : 0,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 const accounts = await import("../src/lib/accounts.ts");
 const payment = await import("../src/lib/payment-mode.ts");
+const pairResults = await import("../src/lib/pair-results.ts");
 const pricing = await import("../src/lib/pricing.ts");
 const rateLimit = await import("../src/lib/rate-limit.ts");
 const sanitizer = await import("../src/lib/report-sanitizer.ts");
@@ -42,6 +43,34 @@ assert.equal(pricing.getDirectedPairs(220), 48180, "220 accounts should produce 
 assert.equal(pricing.getDirectedPairs(500), 249500, "500 accounts should produce 249500 directed pairs");
 assert.equal(pricing.createQuote(500).pricingTier, "volume", "500 account quote should use volume pricing");
 assert.equal(pricing.roundBaht(1.005), 1, "roundBaht should preserve existing Math.round behavior");
+
+assert.deepEqual(pairResults.normalizeFinalPairResults({
+  directedPairs: 2,
+  blocked: 0,
+  alreadyBlocked: 0,
+  failed: 0,
+}), {
+  directedPairs: 2,
+  blocked: 0,
+  alreadyBlocked: 0,
+  failed: 2,
+  reportedFailed: 0,
+  unaccountedPairs: 2,
+}, "unreported final pairs must become failed and refundable");
+
+assert.deepEqual(pairResults.normalizeFinalPairResults({
+  directedPairs: 2,
+  blocked: 1,
+  alreadyBlocked: 3,
+  failed: 9,
+}), {
+  directedPairs: 2,
+  blocked: 1,
+  alreadyBlocked: 1,
+  failed: 0,
+  reportedFailed: 0,
+  unaccountedPairs: 0,
+}, "worker counters must never exceed the quoted pair count");
 
 assert.equal(pricing.isValidTrueMoneyVoucherUrl("https://gift.truemoney.com/campaign/?v=abc"), true, "valid TrueMoney voucher URL should pass format check");
 assert.equal(pricing.isValidTrueMoneyVoucherUrl("https://example.com/campaign/?v=abc"), false, "non-TrueMoney URL should fail format check");
