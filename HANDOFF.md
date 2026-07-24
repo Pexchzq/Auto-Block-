@@ -36,6 +36,8 @@ latest verified commit: 8412ca5
 - A full production job test using two deliberately fake accounts completed:
   wallet reserve -> Vercel dispatch -> local worker -> production callback ->
   sanitized report -> failed-pair refund.
+- The two fake test jobs and their temporary THB 1 admin credit were removed
+  after verification, so production job and wallet data are clean.
 - Final pair accounting now guarantees:
 
   ```text
