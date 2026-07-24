@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 
 const accounts = await import("../src/lib/accounts.ts");
 const payment = await import("../src/lib/payment-mode.ts");
@@ -6,6 +7,7 @@ const pairResults = await import("../src/lib/pair-results.ts");
 const pricing = await import("../src/lib/pricing.ts");
 const rateLimit = await import("../src/lib/rate-limit.ts");
 const sanitizer = await import("../src/lib/report-sanitizer.ts");
+const trueMoney = await import("../src/lib/truemoney-provider.ts");
 
 const sampleAccounts = [
   "# ignored",
@@ -74,6 +76,54 @@ assert.deepEqual(pairResults.normalizeFinalPairResults({
 
 assert.equal(pricing.isValidTrueMoneyVoucherUrl("https://gift.truemoney.com/campaign/?v=abc"), true, "valid TrueMoney voucher URL should pass format check");
 assert.equal(pricing.isValidTrueMoneyVoucherUrl("https://example.com/campaign/?v=abc"), false, "non-TrueMoney URL should fail format check");
+const voucherIdentity = trueMoney.trueMoneyVoucherReference("https://gift.truemoney.com/campaign/?v=secret-code");
+assert.match(voucherIdentity.reference, /^voucher:[a-f0-9]{64}$/, "voucher reference must contain only a one-way hash");
+assert.equal(voucherIdentity.reference.includes("secret-code"), false, "voucher reference must not expose the voucher code");
+assert.deepEqual(trueMoney.parseTrueMoneyProviderResponse({
+  success: true,
+  amount: "125.50",
+  referenceId: "transaction-1",
+}), {
+  accepted: true,
+  amountBaht: 125.5,
+  transactionId: "transaction-1",
+  providerStatus: "redeemed",
+}, "provider response should normalize verified amount and reference");
+
+const originalProviderBase = process.env.TRUEMONEY_API_BASE;
+const originalProviderToken = process.env.TRUEMONEY_API_TOKEN;
+const providerRequests = [];
+const providerServer = createServer((request, response) => {
+  let body = "";
+  request.setEncoding("utf8");
+  request.on("data", (chunk) => { body += chunk; });
+  request.on("end", () => {
+    providerRequests.push({
+      authorization: request.headers.authorization,
+      idempotencyKey: request.headers["idempotency-key"],
+      body: JSON.parse(body),
+    });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ accepted: true, amountBaht: 75, transactionId: "mock-transaction" }));
+  });
+});
+await new Promise((resolve) => providerServer.listen(0, "127.0.0.1", resolve));
+const providerAddress = providerServer.address();
+process.env.TRUEMONEY_API_BASE = `http://127.0.0.1:${providerAddress.port}/`;
+process.env.TRUEMONEY_API_TOKEN = "unit-provider-token";
+const redeemed = await trueMoney.redeemTrueMoneyVoucher(
+  "https://gift.truemoney.com/campaign/?v=unit-voucher",
+  "voucher:unit-reference",
+);
+await new Promise((resolve) => providerServer.close(resolve));
+assert.equal(redeemed.amountBaht, 75, "provider client should return the verified amount");
+assert.equal(providerRequests[0].authorization, "Bearer unit-provider-token", "provider client must authenticate server-side");
+assert.equal(providerRequests[0].idempotencyKey, "voucher:unit-reference", "provider client must send the idempotency key");
+assert.equal(providerRequests[0].body.reference, "voucher:unit-reference", "provider body must contain the same reference");
+if (originalProviderBase === undefined) delete process.env.TRUEMONEY_API_BASE;
+else process.env.TRUEMONEY_API_BASE = originalProviderBase;
+if (originalProviderToken === undefined) delete process.env.TRUEMONEY_API_TOKEN;
+else process.env.TRUEMONEY_API_TOKEN = originalProviderToken;
 
 const sanitized = sanitizer.sanitizeReportValue({
   cookie: "_|WARNING:-DO-NOT-SHARE",

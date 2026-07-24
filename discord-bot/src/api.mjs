@@ -47,6 +47,17 @@ export function getUser(discordUserId) {
   return requestJson(`/api/bot/users/${encodeURIComponent(discordUserId)}`);
 }
 
+export function topUpWallet(discordUserId, voucherUrl) {
+  return requestJson("/api/bot/wallet/topup", {
+    method: "POST",
+    body: JSON.stringify({ discordUserId, voucherUrl }),
+  });
+}
+
+export function getPaymentStatus() {
+  return requestJson("/api/payments/status");
+}
+
 export function getActiveJobs() {
   return requestJson("/api/bot/jobs?active=1");
 }

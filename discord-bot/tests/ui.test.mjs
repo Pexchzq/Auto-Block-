@@ -29,6 +29,7 @@ test("tool picker starts with block id v1", () => {
 });
 
 test("top up action links to the configured website", () => {
-  const button = topUpComponents("https://auto-block.vercel.app")[0].toJSON().components[0];
-  assert.equal(button.url, "https://auto-block.vercel.app");
+  const buttons = topUpComponents("https://auto-block.vercel.app")[0].toJSON().components;
+  assert.equal(buttons[0].custom_id, "orions:topup:voucher");
+  assert.equal(buttons[1].url, "https://auto-block.vercel.app");
 });

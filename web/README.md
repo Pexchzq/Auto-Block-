@@ -240,10 +240,30 @@ npm run seed:admin
 
 ## TrueMoney Webhook Endpoint
 
-After deploying your domain, register this endpoint in the TrueMoney dashboard:
+The application now supports server-side voucher redemption through a provider adapter. Set:
+
+```text
+PAYMENT_PROVIDER_MODE=truemoney
+TRUEMONEY_API_BASE=https://your-provider.example/
+TRUEMONEY_API_TOKEN=...
+TRUEMONEY_REDEEM_PATH=v1/vouchers/redeem
+TRUEMONEY_WEBHOOK_SECRET=...
+```
+
+The redeem provider must accept a bearer token and idempotency key, then return a verified
+amount and transaction id. The full contract and security requirements are documented in
+`docs/TRUEMONEY_PROVIDER.md`.
+
+If that provider delivers asynchronous results, register this callback:
 
 ```text
 https://your-domain.com/api/payments/truemoney/webhook
 ```
 
-Localhost URLs such as `http://127.0.0.1:3000` cannot receive real TrueMoney webhooks unless you expose them with a temporary tunnel such as ngrok or Cloudflare Tunnel.
+The callback requires `Authorization: Bearer <TRUEMONEY_WEBHOOK_SECRET>`. Localhost URLs
+cannot receive callbacks unless they are exposed through a controlled HTTPS tunnel.
+
+TrueMoney's public business page documents incoming-payment webhooks and payment-link APIs,
+but does not publish a gift-envelope redemption API. Do not point this adapter at an
+undocumented mobile/private endpoint. Use an approved provider or migrate checkout to the
+official payment-link and incoming-payment webhook flow.

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { paymentProviderMode, placeholderTopUpAllowed } from "@/lib/payment-mode";
+import { liveTrueMoneyEnabled, paymentProviderMode, placeholderTopUpAllowed } from "@/lib/payment-mode";
 import { maxActiveJobsPerUser } from "@/lib/pricing";
 import { getSupabaseAdmin, getUserIdFromRequest, hasSupabaseAdminConfig, isAdminUser } from "@/lib/supabase-server";
 import { hasWorkerApi } from "@/lib/worker-api";
@@ -68,7 +68,7 @@ export async function GET(request: Request) {
     },
     payment: {
       mode: paymentProviderMode(),
-      liveTrueMoneyEnabled: false,
+      liveTrueMoneyEnabled: liveTrueMoneyEnabled(),
       placeholderTopUpEnabled: placeholderTopUpAllowed(),
     },
     secretsPolicy: "configuration secrets are not returned by this endpoint",

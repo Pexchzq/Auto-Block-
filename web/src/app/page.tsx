@@ -1168,7 +1168,9 @@ function TopUpDialog({
         {voucher && (
           <div className={voucher.validFormat ? "voucher-state ok" : "voucher-state bad"}>
             {voucher.message}<br />
-            Estimated credit: {formatBaht(voucher.estimatedBalanceBaht)}
+            {voucher.estimatedBalanceBaht > 0
+              ? `Estimated credit: ${formatBaht(voucher.estimatedBalanceBaht)}`
+              : "Credit amount: confirmed during redemption"}
           </div>
         )}
         {lastTopUp && (

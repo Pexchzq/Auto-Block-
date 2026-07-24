@@ -90,11 +90,13 @@ export function toolPickerComponents() {
   ];
 }
 
-export function topUpEmbed(user) {
+export function topUpEmbed(user, paymentStatus = {}) {
+  const ready = paymentStatus.liveTrueMoneyEnabled === true
+    || paymentStatus.placeholderTopUpEnabled === true;
   return new EmbedBuilder()
     .setColor(GREEN)
     .setTitle("เติมเงิน Orions")
-    .setDescription("ตรวจสอบยอดคงเหลือและเปิดหน้าเติมเงินผ่านเว็บไซต์ Orions")
+    .setDescription("กรอกลิงก์ซอง TrueMoney ผ่านแบบฟอร์มส่วนตัว ระบบจะเพิ่มยอดตามจำนวนเงินจริงเมื่อยืนยันสำเร็จ")
     .addFields(
       {
         name: "ยอดคงเหลือ",
@@ -103,23 +105,42 @@ export function topUpEmbed(user) {
       },
       {
         name: "สถานะ",
-        value: "🟠 รอเชื่อมต่อ TrueMoney Live",
+        value: ready ? "🟢 พร้อมรับซอง" : "🟠 ยังไม่เชื่อม Provider",
         inline: true,
       },
     )
-    .setFooter({ text: "ห้ามส่งลิงก์ซองหรือข้อมูลชำระเงินในห้องสาธารณะ" });
+    .setFooter({ text: "ลิงก์ซองจะไม่ถูกแสดงในห้องและไม่ถูกบันทึกลงรายงาน" });
 }
 
 export function topUpComponents(url) {
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setLabel("เปิดหน้าเติมเงิน")
+        .setCustomId("orions:topup:voucher")
+        .setLabel("ใส่ลิงก์ซอง")
+        .setEmoji("🎁")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setLabel("เปิดเว็บไซต์")
         .setEmoji("↗️")
         .setStyle(ButtonStyle.Link)
         .setURL(url),
     ),
   ];
+}
+
+export function topUpResultEmbed(result, balanceBaht) {
+  return new EmbedBuilder()
+    .setColor(result.accepted ? GREEN : ORANGE)
+    .setTitle(result.accepted ? "เติมเงินสำเร็จ" : "ซองนี้ไม่ได้เพิ่มยอด")
+    .setDescription(result.message || "TrueMoney processing finished")
+    .addFields(
+      { name: "ยอดที่เพิ่ม", value: `🎁 ${Number(result.creditedBaht || 0).toFixed(2)} บาท`, inline: true },
+      { name: "ยอดคงเหลือ", value: `💳 ${Number(balanceBaht || 0).toFixed(2)} บาท`, inline: true },
+      { name: "รายการ", value: result.transactionId ? `\`${String(result.transactionId).slice(0, 80)}\`` : "-", inline: false },
+    )
+    .setFooter({ text: "Orions TrueMoney receiver" })
+    .setTimestamp();
 }
 
 export function statusEmbed(job, title = "กำลังประมวลผล") {

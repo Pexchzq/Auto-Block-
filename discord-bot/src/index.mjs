@@ -11,7 +11,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from "discord.js";
-import { createJob, getActiveJobs, getJob, getReport, getUser } from "./api.mjs";
+import { createJob, getActiveJobs, getJob, getPaymentStatus, getReport, getUser, topUpWallet } from "./api.mjs";
 import { downloadAccountText } from "./download.mjs";
 import { csvEnv, loadEnv, requiredEnv } from "./env.mjs";
 import { safeError } from "./sanitize.mjs";
@@ -24,6 +24,7 @@ import {
   toolPickerEmbed,
   topUpComponents,
   topUpEmbed,
+  topUpResultEmbed,
   userEmbed,
 } from "./ui.mjs";
 
@@ -93,6 +94,21 @@ function submitModal() {
     .setCustomId("orions:block-id-v1:submit")
     .setTitle("บล็อคไอดี v1")
     .addComponents(new ActionRowBuilder().addComponents(linkInput));
+}
+
+function topUpModal() {
+  const voucherInput = new TextInputBuilder()
+    .setCustomId("voucher_url")
+    .setLabel("ลิงก์ซอง TrueMoney")
+    .setPlaceholder("https://gift.truemoney.com/campaign/?v=...")
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(1_000);
+
+  return new ModalBuilder()
+    .setCustomId("orions:topup:submit")
+    .setTitle("เติมเงินด้วยซอง TrueMoney")
+    .addComponents(new ActionRowBuilder().addComponents(voucherInput));
 }
 
 async function openSubmission(interaction) {
@@ -282,13 +298,39 @@ async function showTopUp(interaction) {
   if (!(await requireAllowedUser(interaction))) return;
   await privateDefer(interaction);
   try {
-    const user = await getUser(interaction.user.id);
+    const [user, paymentStatus] = await Promise.all([
+      getUser(interaction.user.id),
+      getPaymentStatus(),
+    ]);
     await interaction.editReply({
-      embeds: [topUpEmbed(user)],
+      embeds: [topUpEmbed(user, paymentStatus)],
       components: topUpComponents(CONFIG.topUpUrl),
     });
   } catch (error) {
     await interaction.editReply(`อ่านข้อมูลเติมเงินไม่สำเร็จ: ${safeError(error)}`);
+  }
+}
+
+async function openTopUpModal(interaction) {
+  if (!(await requireAllowedUser(interaction))) return;
+  await interaction.showModal(topUpModal());
+}
+
+async function handleTopUp(interaction) {
+  if (!(await requireAllowedUser(interaction))) return;
+  await privateDefer(interaction);
+  try {
+    const result = await topUpWallet(
+      interaction.user.id,
+      interaction.fields.getTextInputValue("voucher_url"),
+    );
+    const user = await getUser(interaction.user.id);
+    await interaction.editReply({
+      embeds: [topUpResultEmbed(result, user.balanceBaht)],
+      components: topUpComponents(CONFIG.topUpUrl),
+    });
+  } catch (error) {
+    await interaction.editReply(`เติมเงินไม่สำเร็จ: ${safeError(error)}`);
   }
 }
 
@@ -370,6 +412,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isButton()) {
       if (interaction.customId === "orions:topup") return await showTopUp(interaction);
+      if (interaction.customId === "orions:topup:voucher") return await openTopUpModal(interaction);
       if (interaction.customId === "orions:user") return await showUser(interaction);
       if (interaction.customId === "orions:tools") return await showTools(interaction);
     }
@@ -380,6 +423,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isModalSubmit() && interaction.customId === "orions:block-id-v1:submit") {
       return await handleSubmission(interaction);
+    }
+    if (interaction.isModalSubmit() && interaction.customId === "orions:topup:submit") {
+      return await handleTopUp(interaction);
     }
 
     if (!interaction.isChatInputCommand()) return;
