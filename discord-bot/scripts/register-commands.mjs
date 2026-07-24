@@ -11,11 +11,11 @@ await loadEnv();
 const commands = [
   new SlashCommandBuilder()
     .setName("panel")
-    .setDescription("ติดตั้ง BlockMesh control panel")
+    .setDescription("ติดตั้ง Orions control panel")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   new SlashCommandBuilder()
     .setName("block")
-    .setDescription("BlockMesh commands")
+    .setDescription("Orions commands")
     .addSubcommand((command) => command.setName("submit").setDescription("เปิดฟอร์มสร้างงาน"))
     .addSubcommand((command) => command
       .setName("status")

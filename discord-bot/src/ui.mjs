@@ -12,15 +12,15 @@ const RED = 0xf05252;
 export function panelEmbed() {
   const embed = new EmbedBuilder()
     .setColor(ORANGE)
-    .setAuthor({ name: "BlockMesh Service" })
-    .setTitle("BlockMesh Automation")
+    .setAuthor({ name: "Orions Service" })
+    .setTitle("Orions Automation")
     .setDescription("สร้างงานบล็อก ติดตามคิว และรับรายงานผ่าน DM ส่วนตัว")
     .addFields(
       { name: "ระบบ", value: "🟢 พร้อมรับงาน", inline: true },
       { name: "โหมด", value: "🎁 Free Mode", inline: true },
       { name: "Worker", value: "ทำงานทีละ 1 คิว", inline: true },
     )
-    .setFooter({ text: "BlockMesh • Discord Control Panel" })
+    .setFooter({ text: "Orions • Discord Control Panel" })
     .setTimestamp();
   if (process.env.DISCORD_PANEL_IMAGE_URL) embed.setImage(process.env.DISCORD_PANEL_IMAGE_URL);
   return embed;

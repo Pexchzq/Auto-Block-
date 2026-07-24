@@ -68,7 +68,7 @@ async function isAllowedUser(userId) {
 
 async function requireAllowedUser(interaction) {
   if (await isAllowedUser(interaction.user.id)) return true;
-  await privateReply(interaction, "บัญชีของคุณไม่มี role ที่อนุญาตให้ใช้ BlockMesh");
+  await privateReply(interaction, "บัญชีของคุณไม่มี role ที่อนุญาตให้ใช้ Orions");
   return false;
 }
 
@@ -83,7 +83,7 @@ function submitModal() {
 
   return new ModalBuilder()
     .setCustomId("blockmesh:submit")
-    .setTitle("สร้างงาน BlockMesh")
+    .setTitle("สร้างงาน Orions")
     .addComponents(new ActionRowBuilder().addComponents(linkInput));
 }
 
@@ -96,7 +96,7 @@ async function openSubmission(interaction) {
       embeds: [
         new EmbedBuilder()
           .setColor(0xff7900)
-          .setTitle("พร้อมรับงาน BlockMesh")
+          .setTitle("พร้อมรับงาน Orions")
           .setDescription("กำลังรอข้อมูลจากแบบฟอร์ม ระบบจะอัปเดตสถานะงานในข้อความนี้"),
       ],
     });
@@ -222,10 +222,10 @@ async function handleSubmission(interaction) {
 
   try {
     if (!progressMessage) {
-      progressMessage = await interaction.user.send("กำลังตรวจสอบไฟล์และสร้างงาน BlockMesh...");
+      progressMessage = await interaction.user.send("กำลังตรวจสอบไฟล์และสร้างงาน Orions...");
     } else {
       await progressMessage.edit({
-        content: "กำลังตรวจสอบไฟล์และสร้างงาน BlockMesh...",
+        content: "กำลังตรวจสอบไฟล์และสร้างงาน Orions...",
         embeds: [],
       });
     }
@@ -288,7 +288,7 @@ async function installPanel(interaction) {
     return;
   }
   await channel.send({ embeds: [panelEmbed()], components: panelComponents() });
-  await privateReply(interaction, `ติดตั้ง BlockMesh panel ใน <#${channel.id}> แล้ว`);
+  await privateReply(interaction, `ติดตั้ง Orions panel ใน <#${channel.id}> แล้ว`);
 }
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -327,7 +327,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.once(Events.ClientReady, async (readyClient) => {
-  console.log(`BlockMesh Discord bot ready as ${readyClient.user.tag}`);
+  console.log(`Orions Discord bot ready as ${readyClient.user.tag}`);
   try {
     const response = await getActiveJobs();
     for (const entry of response.jobs || []) {

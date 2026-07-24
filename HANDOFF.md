@@ -477,3 +477,46 @@ DISCORD_PANEL_CHANNEL_ID, DISCORD_ALLOWED_ROLE_IDS, WEB_API_BASE, BOT_API_TOKEN
 - มี migration/database change หรือไม่
 - ต้อง deploy Web, restart Worker หรือทั้งสองอย่าง
 - มีความเสี่ยงหรือขั้นตอน manual ที่ยังเหลือหรือไม่
+
+## Orions Discord Bot Status (2026-07-24)
+
+Discord application เดิม `Peachza Seller` ถูกนำมาใช้ต่อโดยได้รับการยืนยันจาก
+เจ้าของโปรเจค และเปลี่ยนชื่อ application/bot user เป็น `Orions` แล้ว:
+
+```text
+Application ID: 1411707578844712980
+Guild: Orion (1324323218420662362)
+Panel channel: ส่งงานจ้างฟาม (1412378885294915614)
+Allowed roles:
+  Owner🌟 (1327446687605854261)
+  Admin🔧 (1407625222038884372)
+```
+
+สถานะที่ทำเสร็จแล้ว:
+
+- รีเซ็ต Discord bot token และเก็บเฉพาะใน `discord-bot\.env`
+- ลงทะเบียน guild slash commands `/panel` และ `/block`
+- เปิด Orions bot process บนเครื่อง local
+- ส่ง Orions control panel ไปยัง panel channel
+- ตรวจ message กลับจาก Discord แล้วว่าข้อความไทยและปุ่มแสดงถูกต้อง
+- ตรวจ Bot API ด้วย Discord guild owner แล้วได้ HTTP 200
+- `npm run check` ผ่าน
+- `npm test` ผ่าน 5/5
+
+ไฟล์ secret/runtime ต่อไปนี้ยังถูก ignore และห้าม commit:
+
+```text
+discord-bot\.env
+discord-bot\*.log
+```
+
+การเปิดบอทใหม่หลัง restart เครื่อง:
+
+```powershell
+cd "C:\Users\Siwakan Talasak\OneDrive\เอกสาร\New project 2\discord-bot"
+.\run-bot.bat
+```
+
+งาน manual ที่เหลือคือกดปุ่ม `ข้อมูลผู้ใช้` และ `สร้างงาน` ด้วยบัญชีที่มี role
+Owner/Admin เพื่อทดสอบ Discord interaction และ DM flow แบบผู้ใช้จริงหนึ่งรอบ
+ก่อนนำไปเปิดรับงานจริง
