@@ -28,12 +28,12 @@ export async function POST(request: Request) {
 
   // Production note:
   // Verify provider signature here, then credit wallet ledger in your database.
-  // Do not trust amount/reference fields until signature verification is implemented.
+  // Amount and reference processing starts after signature verification is implemented.
   return NextResponse.json({
     ok: true,
     received: sanitized,
     mode: process.env.PAYMENT_PROVIDER_MODE || "placeholder",
-    message: "Webhook received. Signature verification and wallet crediting must be connected before live payments.",
+    message: "Webhook received. Live payment activation depends on signature verification and wallet crediting.",
   });
 }
 

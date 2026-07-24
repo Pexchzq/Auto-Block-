@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "BlockMesh Automation",
-  description: "Premium dashboard for BlockMesh job quoting, wallet top-up, worker dispatch, and sanitized reports.",
+  description: "Premium dashboard for BlockMesh job quoting, wallet top-up, worker dispatch, and reports.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

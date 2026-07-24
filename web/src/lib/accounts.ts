@@ -36,11 +36,13 @@ export function validateAccountInput(accountText: string, options: { required?: 
 
   const invalidLines: number[] = [];
   lines.forEach((line, index) => {
-    const firstColon = line.indexOf(":");
-    const secondColon = firstColon >= 0 ? line.indexOf(":", firstColon + 1) : -1;
-    const username = firstColon >= 0 ? line.slice(0, firstColon).trim() : "";
-    const cookie = secondColon >= 0 ? line.slice(secondColon + 1).trim() : "";
-    if (!username || secondColon < 0 || !cookie.startsWith("_|WARNING")) {
+    // Anchor on the Roblox cookie marker so the parser accepts the cookie no
+    // matter how many colon-separated fields precede it (username:password:cookie,
+    // username:cookie, or a raw cookie). The password field is optional and is
+    // never used for authentication.
+    const warnIndex = line.indexOf("_|WARNING");
+    const cookie = warnIndex >= 0 ? line.slice(warnIndex).trim() : "";
+    if (warnIndex < 0 || !cookie.startsWith("_|WARNING")) {
       invalidLines.push(index + 1);
     }
   });

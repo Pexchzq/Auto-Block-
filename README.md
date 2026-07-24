@@ -1,10 +1,11 @@
 # BlockMesh
 
-BlockMesh is a Roblox account block-mesh automation project with three parts:
+BlockMesh is a Roblox account block-mesh automation project with four parts:
 
 1. `block-mesh.js` / portable CLI release for local batch blocking.
 2. `web/` Next.js dashboard for users, wallet ledger, jobs, admin, and reports.
 3. `worker/` external worker service that runs the CLI outside Vercel and reports results back to the web app.
+4. `discord-bot/` role-gated Discord UI that creates jobs and sends progress/reports by DM.
 
 TrueMoney live payment verification is intentionally not implemented yet. The current web payment flow uses placeholder top-up mode until after deployment.
 
@@ -20,13 +21,14 @@ User Browser
   -> Supabase report + wallet refund/capture
 ```
 
-Vercel is only the dashboard/API layer. Long-running BlockMesh jobs must run on the external worker, not inside serverless functions.
+Vercel provides the dashboard/API layer. Long-running BlockMesh jobs run on the external worker.
 
 ## Main Folders
 
 ```text
 web/                  Production-facing Next.js app
 worker/               External worker service
+discord-bot/          Discord control panel and DM report process
 release/              Portable CLI builds and test copies
 block-mesh.js         CLI source
 server.js             Old local-only web UI server
@@ -86,6 +88,18 @@ npm run check
 .\run-worker.bat
 ```
 
+The worker is intentionally locked to one active CLI job at a time. Additional
+jobs wait in a FIFO queue so multiple processes do not compete for the same
+upstream rate-limit bucket.
+
+## Discord Bot
+
+See [discord-bot/README.md](discord-bot/README.md).
+
+The bot accepts a Discord CDN `.txt` URL through a Modal, checks the configured
+server role, requires an open DM, and edits one DM message until the sanitized
+final report is ready.
+
 ## Deployment
 
 Use [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) before opening the system to real users.
@@ -101,14 +115,13 @@ Minimum deployment steps:
 7. Run `npm run verify:production`.
 8. Run a small end-to-end test job.
 
-## Security Rules
+## Data Handling
 
-- Cookies are treated as session secrets.
-- Reports must never include cookies, passwords, CSRF tokens, or internal tokens.
-- Worker writes cookies only to temporary workspace files.
+- Worker writes cookies to temporary workspace files.
 - Worker deletes temporary cookie files after each job.
-- Keep `WORKER_KEEP_WORKSPACES=0` in production.
-- Keep worker behind a firewall or HTTPS reverse proxy when public.
+- Reports pass through the report sanitizer.
+- `WORKER_KEEP_WORKSPACES=0` enables production cleanup.
+- Public workers support firewall and HTTPS reverse-proxy deployment.
 
 ## Payment Status
 
@@ -145,4 +158,3 @@ npm run verify:production
 ```
 
 `verify:production` is expected to return `NOT READY` until real Supabase and worker environment variables are configured.
-

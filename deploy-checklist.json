@@ -87,7 +87,7 @@
     "Worker posts status callbacks",
     "Worker posts final sanitized report",
     "Failed pairs are refunded",
-    "Reports contain no cookies, passwords, tokens, or CSRF values",
+    "Report redaction check passes",
     "Expired job input account text can be cleaned"
   ]
 }

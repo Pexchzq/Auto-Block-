@@ -4,6 +4,11 @@ import path from "node:path";
 const reportsDir = path.join(process.cwd(), "reports");
 await mkdir(reportsDir, { recursive: true });
 
+const delayMs = Math.max(0, Number(process.env.FAKE_BLOCKMESH_DELAY_MS || 0));
+if (delayMs > 0) {
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 console.log("[fake-a] Blocking -> fake-b...");
 console.log("OK via user-blocking-api");
 console.log("[fake-b] Blocking -> fake-a...");

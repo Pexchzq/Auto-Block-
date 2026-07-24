@@ -5,16 +5,19 @@ function secret(bytes = 32) {
 }
 
 const workerToken = secret(32);
+const botToken = secret(32);
 const jobInputKey = secret(32);
 const webhookSecret = secret(32);
 
 console.log("Generated BlockMesh production secrets\n");
 console.log("Set these in Vercel web env:");
 console.log(`WORKER_API_TOKEN=${workerToken}`);
+console.log(`BOT_API_TOKEN=${botToken}`);
 console.log(`JOB_INPUT_ENCRYPTION_KEY=${jobInputKey}`);
 console.log(`TRUEMONEY_WEBHOOK_SECRET=${webhookSecret}`);
 console.log("");
 console.log("Set this in worker/.env:");
 console.log(`WORKER_API_TOKEN=${workerToken}`);
 console.log("");
-console.log("Keep these values private. Do not commit them.");
+console.log("Set this in discord-bot/.env:");
+console.log(`BOT_API_TOKEN=${botToken}`);

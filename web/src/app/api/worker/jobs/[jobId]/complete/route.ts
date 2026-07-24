@@ -82,7 +82,7 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
     refundedBaht,
     error: body.error,
     source: "external-worker",
-    secretsPolicy: "cookies/passwords/tokens are never included in reports",
+    secretsPolicy: "report_redaction_enabled",
   };
 
   const { error: reportError } = await admin.from("job_reports").insert({

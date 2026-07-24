@@ -44,6 +44,8 @@ const worker = spawn(nodeExe, ["src/server.js"], {
     WORKER_WORKSPACE: workspace,
     WORKER_KEEP_WORKSPACES: "0",
     WORKER_STATUS_INTERVAL_MS: "1000",
+    WORKER_CONCURRENCY: "5",
+    FAKE_BLOCKMESH_DELAY_MS: "750",
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -67,54 +69,77 @@ async function waitForHealth() {
 
 try {
   await waitForHealth();
-  const response = await fetch(`http://127.0.0.1:${workerPort}/jobs`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      jobId: "self-test-job",
-      userId: "self-test-user",
-      mode: "balanced",
-      accountCount: 2,
-      directedPairs: 2,
-      pricePerPairBaht: 0.01,
-      accountText: "fake-a:pass:_|WARNING:-DO-NOT-SHARE-THIS.fake\nfake-b:pass:_|WARNING:-DO-NOT-SHARE-THIS.fake",
-      callbackBase: `http://127.0.0.1:${callbackPort}`,
-    }),
-  });
-  const created = await response.json();
-  if (!response.ok || !created.queued) throw new Error(`Job create failed: ${JSON.stringify(created)}`);
+  async function createTestJob(jobId) {
+    const response = await fetch(`http://127.0.0.1:${workerPort}/jobs`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        jobId,
+        userId: "self-test-user",
+        mode: "balanced",
+        accountCount: 2,
+        directedPairs: 2,
+        pricePerPairBaht: 0.01,
+        accountText: "fake-a:pass:_|WARNING:-DO-NOT-SHARE-THIS.fake\nfake-b:pass:_|WARNING:-DO-NOT-SHARE-THIS.fake",
+        callbackBase: `http://127.0.0.1:${callbackPort}`,
+      }),
+    });
+    const created = await response.json();
+    if (!response.ok || !created.queued) throw new Error(`Job create failed: ${JSON.stringify(created)}`);
+  }
 
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    if (callbacks.some((item) => item.url?.includes("/complete"))) break;
+  await createTestJob("self-test-job-1");
+  await createTestJob("self-test-job-2");
+
+  const queueHealthResponse = await fetch(`http://127.0.0.1:${workerPort}/health`);
+  const queueHealth = await queueHealthResponse.json();
+  if (queueHealth.activeCount !== 1 || queueHealth.queueDepth !== 1) {
+    throw new Error(`Worker did not serialize jobs: ${JSON.stringify(queueHealth)}`);
+  }
+
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    if (callbacks.filter((item) => item.url?.includes("/complete")).length === 2) break;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
-  const complete = callbacks.find((item) => item.url?.includes("/complete"));
-  if (!complete) throw new Error("No complete callback received");
-  if (complete.auth !== `Bearer ${token}`) {
-    throw new Error("Complete callback did not include the expected bearer token");
+  const completeCallbacks = callbacks.filter((item) => item.url?.includes("/complete"));
+  if (completeCallbacks.length !== 2) throw new Error("Expected two complete callbacks");
+  if (completeCallbacks.some((item) => item.auth !== `Bearer ${token}`)) {
+    throw new Error("A complete callback did not include the expected bearer token");
   }
-  if (complete.payload.blocked !== 1 || complete.payload.alreadyBlocked !== 1 || complete.payload.failed !== 0) {
-    throw new Error(`Unexpected complete payload: ${JSON.stringify(complete.payload)}`);
+  for (const complete of completeCallbacks) {
+    if (complete.payload.blocked !== 1 || complete.payload.alreadyBlocked !== 1 || complete.payload.failed !== 0) {
+      throw new Error(`Unexpected complete payload: ${JSON.stringify(complete.payload)}`);
+    }
+    if (complete.payload.report?.diagnostics?.cookie !== "[REDACTED]") {
+      throw new Error(`Report cookie field was not redacted: ${JSON.stringify(complete.payload.report)}`);
+    }
+    if (complete.payload.report?.diagnostics?.nested?.csrfToken !== "[REDACTED]") {
+      throw new Error(`Nested CSRF field was not redacted: ${JSON.stringify(complete.payload.report)}`);
+    }
   }
-  if (complete.payload.report?.diagnostics?.cookie !== "[REDACTED]") {
-    throw new Error(`Report cookie field was not redacted: ${JSON.stringify(complete.payload.report)}`);
-  }
-  if (complete.payload.report?.diagnostics?.nested?.csrfToken !== "[REDACTED]") {
-    throw new Error(`Nested CSRF field was not redacted: ${JSON.stringify(complete.payload.report)}`);
+
+  const firstCompleteIndex = callbacks.findIndex((item) => item.url?.includes("/self-test-job-1/complete"));
+  const secondRunningIndex = callbacks.findIndex((item) => (
+    item.url?.includes("/self-test-job-2/status") && item.payload?.status === "running"
+  ));
+  if (firstCompleteIndex < 0 || secondRunningIndex < 0 || secondRunningIndex < firstCompleteIndex) {
+    throw new Error(`FIFO callback order was not preserved: ${JSON.stringify(callbacks.map((item) => item.url))}`);
   }
 
   console.log(JSON.stringify({
     ok: true,
+    serialized: queueHealth,
     callbacks: callbacks.map((item) => item.url),
-    complete: complete.payload,
+    complete: completeCallbacks.map((item) => item.payload),
   }, null, 2));
 } finally {
   worker.kill();
   callbackServer.close();
   await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
-  await rm(path.join(repoRoot, ".tmp", "blockmesh-jobs", "self-test-job"), { recursive: true, force: true }).catch(() => undefined);
+  await rm(path.join(repoRoot, ".tmp", "blockmesh-jobs", "self-test-job-1"), { recursive: true, force: true }).catch(() => undefined);
+  await rm(path.join(repoRoot, ".tmp", "blockmesh-jobs", "self-test-job-2"), { recursive: true, force: true }).catch(() => undefined);
 }

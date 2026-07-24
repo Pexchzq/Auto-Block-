@@ -41,7 +41,6 @@ QUICK START
 6. Run run-one-click-live.bat when you want validate + plan + apply in one click.
 
 The tool writes sanitized reports to the reports folder.
-Do not share cookies.txt.
 "@ | Set-Content -LiteralPath (Join-Path $StageDir "QUICK_START.txt") -Encoding UTF8
 
 @"

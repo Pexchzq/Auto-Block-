@@ -13,6 +13,8 @@ const optional = [
   "WORKER_API_BASE",
   "WORKER_API_TOKEN",
   "PAYMENT_PROVIDER_MODE",
+  "BOT_API_TOKEN",
+  "BOT_FREE_MODE",
 ];
 
 function status(name, ok, detail = "") {
@@ -48,6 +50,15 @@ if (process.env.JOB_INPUT_ENCRYPTION_KEY) {
   passed = status("env JOB_INPUT_ENCRYPTION_KEY length", process.env.JOB_INPUT_ENCRYPTION_KEY.length >= 32, "minimum 32 characters recommended") && passed;
 }
 
+if (process.env.BOT_API_TOKEN) {
+  passed = status("env BOT_API_TOKEN length", process.env.BOT_API_TOKEN.length >= 32, "minimum 32 characters recommended") && passed;
+  passed = status(
+    "env BOT_API_TOKEN separation",
+    process.env.BOT_API_TOKEN !== process.env.WORKER_API_TOKEN,
+    "must differ from WORKER_API_TOKEN",
+  ) && passed;
+}
+
 passed = status(
   "env BLOCKMESH_LOCAL_WORKER disabled",
   process.env.BLOCKMESH_LOCAL_WORKER !== "1",
@@ -75,6 +86,7 @@ if (url && serviceRole) {
     "payment_vouchers",
     "worker_nodes",
     "audit_logs",
+    "discord_identities",
   ];
 
   for (const table of tableChecks) {

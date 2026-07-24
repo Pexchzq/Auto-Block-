@@ -1,0 +1,17 @@
+# BlockMesh proxies — คัดลอกไฟล์นี้เป็น proxies.txt แล้วใส่ proxy จริง
+#
+# บรรทัดละ 1 proxy รูปแบบที่รองรับ:
+#   host:port
+#   user:pass@host:port
+#   http://user:pass@host:port
+#
+# ระบบจะจ่าย proxy ให้บัญชีแบบ round-robin (บัญชี i -> proxy[i % จำนวน])
+# แนะนำ: residential/mobile proxy (datacenter มักโดน Roblox เบรกหนัก)
+# แต่ละ IP มี rate bucket ~115/นาที ของตัวเอง => N proxy = ~N เท่า
+#
+# ใช้งาน:
+#   node block-mesh.js apply --cookies cookies.txt --proxies proxies.txt --mode balanced --allow-unverified-blocklist --skip-block-list-check
+#
+# ==== ใส่ proxy ต่อจากบรรทัดนี้ ====
+# 203.0.113.10:8080
+# user1:pass1@203.0.113.11:8080

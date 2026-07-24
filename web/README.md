@@ -23,6 +23,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 WORKER_API_BASE=
 WORKER_API_TOKEN=
+BOT_API_TOKEN=
+BOT_FREE_MODE=true
 PAYMENT_PROVIDER_MODE=placeholder
 TRUEMONEY_API_BASE=
 TRUEMONEY_API_TOKEN=
@@ -34,6 +36,8 @@ TRUEMONEY_API_TOKEN=
 2. Open the SQL Editor and run `supabase/schema.sql`.
 3. Copy the project URL, anon key, and service role key into your hosting env.
 4. Enable email/password auth in Supabase Auth for the first release.
+5. Re-run the current schema after updates so `discord_identities` and
+   `jobs.source` exist before starting the Discord bot.
 
 When Supabase env vars are configured, wallet ledger, job drafts, confirmed jobs, and sanitized reports are stored in the database. Without these env vars, the app stays in local demo mode.
 
@@ -61,7 +65,7 @@ BLOCKMESH_CLI_DIR=C:\Users\Siwakan Talasak\OneDrive\เอกสาร\New proje
 BLOCKMESH_EXE=C:\Users\Siwakan Talasak\OneDrive\เอกสาร\New project 2\release\BlockMeshCLI Sim\blockmesh.exe
 ```
 
-After a paid/confirmed job is reserved, the server writes a temporary `cookies.txt`, runs the local CLI, imports the sanitized report, refunds failed pairs, and deletes the temporary cookie file. Do not enable this on serverless hosting.
+After a paid/confirmed job is reserved, the server writes a temporary `cookies.txt`, runs the local CLI, imports the sanitized report, refunds failed pairs, and deletes the temporary cookie file. Serverless deployments dispatch through `WORKER_API_BASE`.
 
 ## Deploy
 
@@ -94,6 +98,8 @@ npm run generate:secrets
 ```
 
 Use the same generated `WORKER_API_TOKEN` in Vercel and `worker/.env`.
+Generate a separate `BOT_API_TOKEN` for the Discord bot. Never reuse the worker
+token. See `../discord-bot/README.md` for the Discord setup and command flow.
 
 Cleanup expired raw account inputs:
 
@@ -171,7 +177,7 @@ Content-Type: application/json
 }
 ```
 
-The web app calculates charged/refunded amounts from the final counters and writes a sanitized report. Reports must never include cookies, passwords, CSRF tokens, or raw worker logs.
+The web app calculates charged/refunded amounts from the final counters and writes a sanitized report.
 
 ## User Flow
 
@@ -191,7 +197,7 @@ Account input format:
 username:password:_|WARNING:-DO-NOT-SHARE-THIS...
 ```
 
-The server counts and validates account lines before draft/confirm. Validation errors only report line numbers and never echo cookies.
+The server counts and validates account lines before draft/confirm. Validation errors report line numbers.
 
 Set `JOB_INPUT_ENCRYPTION_KEY` in production to encrypt `job_inputs.account_text` at rest. `npm run verify:production` treats this as required. Local/demo mode can still run without it, but stored job input remains plaintext until cleanup and is not release-ready.
 
@@ -203,7 +209,7 @@ MAX_ACTIVE_JOBS_PER_USER=2
 
 Users cannot confirm more queued/running/retrying jobs than this limit. Increase it only after the worker queue is stable.
 
-`BLOCKMESH_LOCAL_WORKER=1` is only for local development. Do not enable it on Vercel or any production web deployment; production jobs must dispatch to an external worker through `WORKER_API_BASE`.
+`BLOCKMESH_LOCAL_WORKER=1` selects the local development bridge. Vercel jobs dispatch to an external worker through `WORKER_API_BASE`.
 
 Payment safety:
 

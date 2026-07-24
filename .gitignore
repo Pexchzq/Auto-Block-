@@ -1,6 +1,15 @@
 cookies*.txt
+proxies.txt
+experiments/**/cookies.txt
+experiments/**/reports/
+experiments/**/state/
+experiments/**/run-events/
+experiments/**/*.log
 reports/
 state/
+run-events/
+diagnostics/
+Sim/
 license/*.token
 node_modules/
 web/.next/
@@ -14,3 +23,5 @@ release/
 worker/.env
 worker/.work/
 worker/**/*.log
+discord-bot/.env
+discord-bot/**/*.log

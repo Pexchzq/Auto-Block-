@@ -64,7 +64,7 @@ export async function GET(_: Request, context: { params: Promise<{ jobId: string
       chargedBaht: Number(job.charged_baht || 0),
       refundedBaht: Number(job.refunded_baht || 0),
       workerStatus: job.worker_status || "mock",
-      secretsPolicy: "cookies/passwords/tokens are never included in reports",
+      secretsPolicy: "report_redaction_enabled",
     };
     await admin.from("job_reports").insert({ job_id: jobId, user_id: userId, report_json: report });
     return NextResponse.json({ report });
@@ -87,7 +87,7 @@ export async function GET(_: Request, context: { params: Promise<{ jobId: string
         reservedBaht: 63.2,
         chargedBaht: 60.8,
         refundedBaht: 2.4,
-        secretsPolicy: "cookies/passwords/tokens are never included in reports",
+        secretsPolicy: "report_redaction_enabled",
       },
     })),
   );

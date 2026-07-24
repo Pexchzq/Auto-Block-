@@ -4,6 +4,8 @@
 const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
+const net = require("node:net");
+const tls = require("node:tls");
 const path = require("node:path");
 
 const ROOT = process.pkg ? path.dirname(process.execPath) : __dirname;
@@ -26,13 +28,13 @@ const CONFIG = {
   perAccountDelayMaxMs: 900,
   cooldownOn429Ms: 12000,
   globalCooldownOn429Ms: 0,
-  globalBlockDelayMs: 350,
-  globalBlockDelayFloorMs: 350,
-  globalBlockDelayStartMs: 350,
-  globalDelayStepMs: 25,
-  globalDelayRecoveryStepMs: 100,
-  globalDelayStableWindowMs: 120000,
-  globalDelayHoldMs: 90000,
+  globalBlockDelayMs: 450,
+  globalBlockDelayFloorMs: 380,
+  globalBlockDelayStartMs: 450,
+  globalDelayStepMs: 40,
+  globalDelayRecoveryStepMs: 70,
+  globalDelayStableWindowMs: 40000,
+  globalDelayHoldMs: 30000,
   speed429Threshold: 3,
   targetCooldownMs: 1800,
   recoveryHoldMs: 60000,
@@ -45,6 +47,9 @@ const CONFIG = {
   blockLimitWarningAt: 950,
   max429Retries: 0,
   backoff429Ms: [12000, 24000, 48000],
+  blockInlineRetries: 2,
+  blockInlineRetryBaseMs: 900,
+  laneAuthStrikeLimit: 3,
   userAgent:
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 RobloxBlockMesh/1.0",
 };
@@ -116,6 +121,13 @@ const ENDPOINTS = {
       bodyType: "none",
       body: () => null,
     },
+    {
+      name: "accountsettings-legacy",
+      method: "POST",
+      url: (targetUserId) => `https://accountsettings.roblox.com/v1/users/${targetUserId}/block`,
+      bodyType: "none",
+      body: () => null,
+    },
   ],
 };
 
@@ -132,11 +144,16 @@ Usage:
   ${bin} retry-failed --report reports\\block-report-xxxx.json [--cookies cookies.txt]
   ${bin} status
 
+Options:
+  --proxies proxies.txt   Route each account through its own proxy IP
+                          (round-robin). Breaks the shared per-IP rate ceiling.
+                          Lines: host:port  or  user:pass@host:port
+
 Input format:
   username:password:_|WARNING:-DO-NOT-SHARE-THIS...
 
 Safety:
-  This tool never prints or writes passwords, cookies, or CSRF tokens.
+  Report redaction is enabled.
 `);
 }
 
@@ -144,6 +161,7 @@ function parseArgs(argv) {
   const args = {
     command: argv[2] || "help",
     cookiesFile: DEFAULT_COOKIES_FILE,
+    proxiesFile: null,
     reportFile: null,
     simulationProfile: "mixed",
     allowUnverifiedBlockList: CONFIG.allowUnverifiedBlockList,
@@ -180,6 +198,9 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === "--cookies") {
       args.cookiesFile = path.resolve(argv[i + 1] || "");
+      i += 1;
+    } else if (arg === "--proxies") {
+      args.proxiesFile = path.resolve(argv[i + 1] || "");
       i += 1;
     } else if (arg === "--report") {
       args.reportFile = path.resolve(argv[i + 1] || "");
@@ -277,6 +298,121 @@ function makeHeaders(headers) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Proxy support (pure Node, no dependencies). Each source account can egress
+// through its own proxy IP so Roblox's per-IP rate bucket is no longer shared.
+// HTTPS is tunneled via HTTP CONNECT. Inactive unless --proxies is provided.
+// ---------------------------------------------------------------------------
+const PROXY_AGENT_CACHE = new Map();
+
+function parseProxyUrl(raw) {
+  let value = String(raw || "").trim();
+  if (!value) return null;
+  if (!/^[a-z0-9]+:\/\//i.test(value)) value = `http://${value}`;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (!url.hostname) return null;
+  return {
+    host: url.hostname,
+    port: Number(url.port) || 8080,
+    username: decodeURIComponent(url.username || ""),
+    password: decodeURIComponent(url.password || ""),
+  };
+}
+
+function redactProxy(raw) {
+  const proxy = parseProxyUrl(raw);
+  if (!proxy) return null;
+  return `${proxy.host}:${proxy.port}${proxy.username ? " (auth)" : ""}`;
+}
+
+class HttpsProxyAgent extends https.Agent {
+  constructor(proxy, options) {
+    super({ keepAlive: true, maxSockets: 64, ...options });
+    this.proxy = proxy;
+  }
+
+  createConnection(options, callback) {
+    const proxy = this.proxy;
+    const targetHost = options.host;
+    const targetPort = options.port || 443;
+    const socket = net.connect({ host: proxy.host, port: proxy.port });
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      callback(error);
+    };
+
+    socket.once("error", fail);
+    socket.once("connect", () => {
+      let request = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n`;
+      if (proxy.username || proxy.password) {
+        const auth = Buffer.from(`${proxy.username}:${proxy.password}`).toString("base64");
+        request += `Proxy-Authorization: Basic ${auth}\r\n`;
+      }
+      request += "\r\n";
+      socket.write(request);
+    });
+
+    let buffer = Buffer.alloc(0);
+    const onData = (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      socket.removeListener("data", onData);
+      const statusLine = buffer.slice(0, buffer.indexOf("\r\n")).toString("utf8");
+      const match = statusLine.match(/^HTTP\/\d\.\d\s+(\d+)/);
+      if (!match || match[1] !== "200") {
+        fail(new Error(`proxy_connect_failed_${match ? match[1] : "unknown"}`));
+        return;
+      }
+      const leftover = buffer.slice(headerEnd + 4);
+      if (leftover.length) socket.unshift(leftover);
+      settled = true;
+      socket.removeListener("error", fail);
+      const tlsSocket = tls.connect(
+        { socket, servername: options.servername || targetHost },
+        () => callback(null, tlsSocket),
+      );
+      tlsSocket.once("error", (error) => callback(error));
+    };
+    socket.on("data", onData);
+  }
+}
+
+function makeProxyAgent(rawProxy) {
+  if (!rawProxy) return null;
+  if (PROXY_AGENT_CACHE.has(rawProxy)) return PROXY_AGENT_CACHE.get(rawProxy);
+  const proxy = parseProxyUrl(rawProxy);
+  if (!proxy) return null;
+  const agent = new HttpsProxyAgent(proxy);
+  PROXY_AGENT_CACHE.set(rawProxy, agent);
+  return agent;
+}
+
+function loadProxies(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return [];
+  return fs
+    .readFileSync(filePath, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#") && parseProxyUrl(line));
+}
+
+function assignProxies(accounts, proxies) {
+  if (!Array.isArray(proxies) || proxies.length === 0) return 0;
+  accounts.forEach((account, index) => {
+    account.proxy = proxies[index % proxies.length];
+  });
+  return proxies.length;
+}
+
 function nodeFetch(url, options = {}) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
@@ -293,6 +429,7 @@ function nodeFetch(url, options = {}) {
       {
         method: options.method || "GET",
         headers,
+        ...(options.agent ? { agent: options.agent } : {}),
       },
       (response) => {
         const chunks = [];
@@ -321,9 +458,26 @@ function nodeFetch(url, options = {}) {
 
 const fetchImpl = typeof fetch === "function" ? fetch : nodeFetch;
 let ACTIVE_METRICS = null;
-let GLOBAL_RATE_LIMIT_UNTIL = 0;
-let GLOBAL_NEXT_BLOCK_AT = 0;
-let GLOBAL_BLOCK_SLOT_CHAIN = Promise.resolve();
+
+// Per-egress-IP pacing. Each proxy (and "local" for no-proxy) gets its OWN
+// serialized block-slot chain, next-slot timer, and 429 cooldown, so N proxies
+// run as N independent streams in parallel instead of one shared global gate.
+// The full mesh is unaffected: only WHERE each request egresses is spread out.
+const NET_LANES = new Map();
+
+function netLane(key) {
+  const laneKey = key || "local";
+  let lane = NET_LANES.get(laneKey);
+  if (!lane) {
+    lane = { chain: Promise.resolve(), nextBlockAt: 0, rateLimitUntil: 0 };
+    NET_LANES.set(laneKey, lane);
+  }
+  return lane;
+}
+
+function resetNetLanes() {
+  NET_LANES.clear();
+}
 
 function ensureDirs() {
   fs.mkdirSync(REPORTS_DIR, { recursive: true });
@@ -355,7 +509,9 @@ function sleep(ms) {
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = CONFIG.requestTimeoutMs) {
   const timeout = Number(timeoutMs || CONFIG.requestTimeoutMs || 30000);
-  if (fetchImpl === nodeFetch) {
+  // Always use nodeFetch when a proxy agent is attached — global fetch cannot
+  // route per-request through our CONNECT tunnel.
+  if (fetchImpl === nodeFetch || options.agent) {
     return nodeFetch(url, { ...options, timeoutMs: timeout });
   }
 
@@ -494,28 +650,30 @@ function clampNumber(value, min, max, fallback) {
   return Math.max(min, Math.min(max, Math.floor(number)));
 }
 
-async function waitForGlobalRateLimit() {
-  const waitMs = GLOBAL_RATE_LIMIT_UNTIL - Date.now();
+async function waitForRateLimit(key) {
+  const lane = netLane(key);
+  const waitMs = lane.rateLimitUntil - Date.now();
   if (waitMs > 0) {
     await sleep(waitMs);
   }
 }
 
-async function waitForGlobalBlockSlot() {
-  const previous = GLOBAL_BLOCK_SLOT_CHAIN;
+async function waitForBlockSlot(key) {
+  const lane = netLane(key);
+  const previous = lane.chain;
   let release;
-  GLOBAL_BLOCK_SLOT_CHAIN = new Promise((resolve) => {
+  lane.chain = new Promise((resolve) => {
     release = resolve;
   });
 
   await previous;
   try {
     const now = Date.now();
-    const waitMs = Math.max(GLOBAL_RATE_LIMIT_UNTIL, GLOBAL_NEXT_BLOCK_AT) - now;
+    const waitMs = Math.max(lane.rateLimitUntil, lane.nextBlockAt) - now;
     if (waitMs > 0) {
       await sleep(waitMs);
     }
-    GLOBAL_NEXT_BLOCK_AT = Date.now() + CONFIG.globalBlockDelayMs;
+    lane.nextBlockAt = Date.now() + CONFIG.globalBlockDelayMs;
   } finally {
     release();
   }
@@ -565,11 +723,14 @@ function normalizeApplyOptions(args = {}) {
       targetCooldownMs: 1800,
       recoveryHoldMs: 60000,
       sourceMaxPerWindow: 24,
-      globalBlockDelayMs: 350,
-      globalBlockDelayFloorMs: 350,
-      globalDelayStableWindowMs: 120000,
-      globalDelayHoldMs: 90000,
-      speed429Threshold: 3,
+      // Gentle open (≈128/min) so we don't burn Roblox's burst budget and
+      // trigger an early 429 storm; creep toward the floor (≈158/min) only
+      // while clean, and recover fast after any 429 (short stable window/hold).
+      globalBlockDelayMs: 470,
+      globalBlockDelayFloorMs: 380,
+      globalDelayStableWindowMs: 40000,
+      globalDelayHoldMs: 30000,
+      speed429Threshold: 2,
     },
     fast: {
       accountConcurrency: 10,
@@ -655,7 +816,7 @@ function normalizeApplyOptions(args = {}) {
     ? String(args.applyMode || CONFIG.applyMode)
     : "balanced";
   const preset = presets[applyMode];
-  const accountConcurrency = clampNumber(args.accountConcurrency, 1, 20, preset.accountConcurrency);
+  const accountConcurrency = clampNumber(args.accountConcurrency, 1, 64, preset.accountConcurrency);
   const accountLimit = clampNumber(args.accountLimit, 0, 10000, CONFIG.accountLimit);
   const validateConcurrency = clampNumber(args.validateConcurrency, 1, 50, CONFIG.validateConcurrency);
   const perAccountDelayMinMs = clampNumber(args.perAccountDelayMinMs, 0, 60000, preset.perAccountDelayMinMs);
@@ -838,27 +999,22 @@ function parseCookiesFile(filePath) {
 
     if (!line || line.startsWith("#")) continue;
 
-    const firstColon = line.indexOf(":");
-    const secondColon = firstColon >= 0 ? line.indexOf(":", firstColon + 1) : -1;
-
-    if (firstColon < 1 || secondColon < firstColon + 2) {
-      invalid.push({ lineNo, status: "invalid_format", reason: "Expected username:password:cookie" });
+    // Anchor on the Roblox cookie marker so we reliably extract the cookie no
+    // matter how many colon-separated fields precede it. Supported inputs:
+    //   username:password:_|WARNING:-DO-NOT-SHARE...   (full triple)
+    //   username:_|WARNING:-DO-NOT-SHARE...            (no password)
+    //   _|WARNING:-DO-NOT-SHARE...                     (raw cookie only)
+    // The password field is optional and never used for auth (cookie-based).
+    const warnIndex = line.indexOf("_|WARNING");
+    if (warnIndex === -1) {
+      invalid.push({ lineNo, status: "invalid_format", reason: "Cookie marker _|WARNING not found" });
       continue;
     }
 
-    const alias = line.slice(0, firstColon).trim();
-    const password = line.slice(firstColon + 1, secondColon);
-    const cookie = line.slice(secondColon + 1).trim();
-
-    if (!alias) {
-      invalid.push({ lineNo, status: "invalid_format", reason: "Missing username" });
-      continue;
-    }
-
-    if (!password) {
-      invalid.push({ lineNo, alias, status: "invalid_format", reason: "Missing password field" });
-      continue;
-    }
+    const cookie = line.slice(warnIndex).trim();
+    const meta = line.slice(0, warnIndex).replace(/[:\s]+$/, "");
+    const metaParts = meta.length ? meta.split(":") : [];
+    const alias = (metaParts[0] || "").trim() || `account-${lineNo}`;
 
     if (!cookie.startsWith("_|WARNING")) {
       invalid.push({ lineNo, alias, status: "invalid_format", reason: "Cookie must start with _|WARNING" });
@@ -951,6 +1107,7 @@ async function rawRequest(account, options) {
       method: options.method || "GET",
       headers,
       body: options.body,
+      agent: account.proxy ? makeProxyAgent(account.proxy) : undefined,
     }, CONFIG.requestTimeoutMs);
   } catch (error) {
     recordEndpointFailure(options.url, sanitizeError(error.message));
@@ -975,8 +1132,9 @@ async function rawRequest(account, options) {
 async function robloxRequest(account, options) {
   let csrfRetryUsed = false;
 
+  const laneKey = account.proxy || "local";
   for (let attempt = 0; attempt <= CONFIG.max429Retries; attempt += 1) {
-    await waitForGlobalRateLimit();
+    await waitForRateLimit(laneKey);
     const result = await rawRequest(account, options);
 
     const nextCsrf = result.headers.get("x-csrf-token");
@@ -989,7 +1147,8 @@ async function robloxRequest(account, options) {
     if (result.status === 429) {
       if (ACTIVE_METRICS) ACTIVE_METRICS.rateLimitCount += 1;
       if (CONFIG.globalCooldownOn429Ms > 0) {
-        GLOBAL_RATE_LIMIT_UNTIL = Math.max(GLOBAL_RATE_LIMIT_UNTIL, Date.now() + CONFIG.globalCooldownOn429Ms);
+        const lane = netLane(laneKey);
+        lane.rateLimitUntil = Math.max(lane.rateLimitUntil, Date.now() + CONFIG.globalCooldownOn429Ms);
       }
     }
 
@@ -1026,18 +1185,19 @@ async function getAuthenticatedUser(account) {
     url: ENDPOINTS.authenticatedUser,
   });
 
-  if (result.status === 401) {
-    return { ok: false, status: "invalid_cookie", httpStatus: result.status };
-  }
-
-  if (result.status === 403) {
-    return { ok: false, status: "challenge_or_forbidden", httpStatus: result.status };
+  if (result.status === 401 || result.status === 403) {
+    return {
+      ok: false,
+      status: classifyAuthFailure(result),
+      httpStatus: result.status,
+      reason: sanitizeError(extractRobloxErrorMessage(result.body) || `status_${result.status}`),
+    };
   }
 
   if (!result.ok || !result.body || typeof result.body.id !== "number") {
     return {
       ok: false,
-      status: "auth_failed",
+      status: classifyAuthFailure(result),
       httpStatus: result.status,
       reason: sanitizeError(JSON.stringify(result.body || {})),
     };
@@ -1071,7 +1231,20 @@ async function validateAccounts(accounts, logger, options = {}) {
 
   function isTransientValidateFailure(auth) {
     if (!auth || auth.ok) return false;
-    if (auth.httpStatus === 429 || auth.status === "exception") return true;
+    // Permanent account states never recover by retrying; skip them immediately
+    // so we don't waste time re-validating moderated/banned/locked accounts.
+    const permanent = new Set([
+      "invalid_cookie",
+      "moderated",
+      "banned",
+      "challenge_captcha",
+      "challenge_2fa",
+      "challenge_verification",
+      "forbidden_unknown",
+    ]);
+    if (permanent.has(auth.status) || String(auth.status || "").startsWith("challenge_")) return false;
+    if (auth.httpStatus === 429 || auth.status === "rate_limited") return true;
+    if (auth.status === "server_error" || auth.status === "exception") return true;
     const reason = String(auth.reason || "");
     return auth.status === "auth_failed" && reason.includes('"code":0');
   }
@@ -1155,6 +1328,19 @@ function hydrateAccountsFromState(accounts) {
 
 async function prepareAccountsAuth(accounts, logger, options = {}, args = {}) {
   const output = createLogger(logger);
+
+  if (args.proxiesFile) {
+    const proxies = loadProxies(args.proxiesFile);
+    if (proxies.length === 0) {
+      output.log(`Proxy file had no usable entries: ${args.proxiesFile}. Continuing without proxies.`);
+    } else {
+      const count = assignProxies(accounts, proxies);
+      output.log(
+        `Proxies: ${count} across ${accounts.length} accounts (${(accounts.length / count).toFixed(1)} accounts/proxy). Each account egresses via its assigned proxy IP.`,
+      );
+    }
+  }
+
   let hydrated = 0;
   if (args.useStateAuth) {
     hydrated = hydrateAccountsFromState(accounts);
@@ -1398,6 +1584,76 @@ async function blockUser(source, target) {
   return { ok: false, ...(lastError || { error: "unknown_error" }) };
 }
 
+// Retry transient block failures (429 / 5xx / network) within the same run so a
+// short-lived hiccup does not turn into a permanent "failed" pair. Each retry
+// re-acquires a global block slot so request spacing is still respected.
+async function blockUserWithRetry(source, target) {
+  let last = null;
+  const laneKey = source.proxy || "local";
+  for (let attempt = 0; attempt <= CONFIG.blockInlineRetries; attempt += 1) {
+    if (attempt > 0) {
+      await waitForBlockSlot(laneKey);
+    }
+    const result = await blockUser(source, target);
+    if (result.ok) return result;
+    last = result;
+
+    const httpStatus = result.httpStatus || 0;
+    const transient = httpStatus === 429 || httpStatus >= 500 || Boolean(result.retryable);
+    if (!transient || result.limitReached || attempt >= CONFIG.blockInlineRetries) {
+      break;
+    }
+
+    const base = CONFIG.blockInlineRetryBaseMs;
+    await sleep(randomBetween(base, base * 2) * (attempt + 1));
+  }
+  return last || { ok: false, error: "unknown_error" };
+}
+
+function extractRobloxErrorMessage(body) {
+  if (!body) return "";
+  if (typeof body === "string") return body;
+  if (typeof body.message === "string") return body.message;
+  if (Array.isArray(body.errors) && body.errors.length > 0) {
+    const first = body.errors[0];
+    if (first && typeof first.message === "string") return first.message;
+  }
+  if (typeof body.raw === "string") return body.raw;
+  return "";
+}
+
+// Turn a failed auth response into a specific, human-meaningful reason instead
+// of the old catch-all "challenge_or_forbidden". Roblox encodes the cause in the
+// HTTP status, the rblx-challenge-type header, and the error body message.
+function classifyAuthFailure(result) {
+  const status = result.status;
+  if (status === 401) return "invalid_cookie";
+  if (status === 429) return "rate_limited";
+  if (status >= 500) return "server_error";
+
+  if (status === 403) {
+    const challengeType = String(result.headers.get("rblx-challenge-type") || "").toLowerCase();
+    if (challengeType) {
+      if (challengeType.includes("captcha")) return "challenge_captcha";
+      if (challengeType.includes("authenticator") || challengeType.includes("twostep") || challengeType.includes("2sv")) {
+        return "challenge_2fa";
+      }
+      if (challengeType.includes("verification") || challengeType.includes("phone") || challengeType.includes("id")) {
+        return "challenge_verification";
+      }
+      return `challenge_${challengeType}`.slice(0, 40);
+    }
+
+    const message = extractRobloxErrorMessage(result.body).toLowerCase();
+    if (message.includes("moderat")) return "moderated";
+    if (message.includes("terminat") || message.includes("banned") || message.includes("deleted")) return "banned";
+    if (message.includes("token validation")) return "csrf_forbidden";
+    return "forbidden_unknown";
+  }
+
+  return "auth_failed";
+}
+
 function extractRobloxErrorCode(body) {
   if (!body) return null;
   if (typeof body === "number" || typeof body === "string") {
@@ -1410,6 +1666,16 @@ function extractRobloxErrorCode(body) {
     if (typeof first.code === "number" || typeof first.code === "string") return Number(first.code);
   }
   return null;
+}
+
+function summarizeAuthFailures(accounts) {
+  const breakdown = {};
+  for (const account of accounts) {
+    if (account.valid) continue;
+    const reason = (account.auth && account.auth.status) || "not_checked";
+    breakdown[reason] = (breakdown[reason] || 0) + 1;
+  }
+  return breakdown;
 }
 
 function accountReport(account) {
@@ -1425,6 +1691,7 @@ function accountReport(account) {
       account.blockedUsers instanceof Set ? account.blockedUsers.size : null,
     blockListStatus: account.blockListStatus,
     blockListEndpoint: account.blockListEndpoint || null,
+    proxy: account.proxy ? redactProxy(account.proxy) : null,
     error:
       account.auth && account.auth.reason
         ? sanitizeError(account.auth.reason)
@@ -1486,6 +1753,7 @@ function makeLaneState(group) {
     cooldownUntil: 0,
     blocked: false,
     recent429: 0,
+    authStrikes: 0,
     completed: 0,
     requestTimes: [],
   };
@@ -1791,8 +2059,8 @@ async function applyOnePair(pair, output, applyOptions, eventLogger, context = {
   }
 
   try {
-    await waitForGlobalBlockSlot();
-    const result = await blockUser(pair.source, pair.target);
+    await waitForBlockSlot(pair.source.proxy || "local");
+    const result = await blockUserWithRetry(pair.source, pair.target);
     if (result.ok && result.alreadyBlocked) {
       pair.status = "skipped_existing_api";
       pair.source.blockedUsers.add(pair.target.auth.userId);
@@ -1911,10 +2179,12 @@ async function runApplyLanes(pairs, output, applyOptions, cancelToken, eventLogg
     const rate429 = results.filter((item) => item.httpStatus === 429).length;
     const pct = totalPendingPairs > 0 ? ((done / totalPendingPairs) * 100).toFixed(1) : "100.0";
     const line = `[progress] ${done}/${totalPendingPairs} (${pct}%) ok=${blocked} already=${already} failed=${failed} 429=${rate429} speed=${ratePerMin.toFixed(1)}/min eta=${formatDuration(etaMs)} active=${controller.activeConcurrency} lanes=${lanes.filter((lane) => !lane.blocked && lane.queue.length > 0).length} globalDelay=${CONFIG.globalBlockDelayMs}ms`;
+    const thaiLine = `   สรุปสด: บล็อกแล้ว ${blocked} | ซ้ำ ${already} | พลาด ${failed} | ติดลิมิต ${rate429} | เหลือ ${remaining} คู่ | ${ratePerMin.toFixed(0)}/นาที | อีก ~${formatDuration(etaMs)} (${pct}%)`;
     if (applyOptions.progressOnly) {
-      process.stderr.write(`${line}\n`);
+      process.stderr.write(`${line}\n${thaiLine}\n`);
     } else {
       output.log(line);
+      output.log(thaiLine);
     }
   }
 
@@ -1982,13 +2252,18 @@ async function runApplyLanes(pairs, output, applyOptions, cancelToken, eventLogg
             });
           }
         }
-        if (
-          result.error === "invalid_cookie" ||
-          result.error === "challenge_or_forbidden" ||
-          result.httpStatus === 401 ||
-          result.httpStatus === 403
-        ) {
+        if (result.httpStatus === 401 || result.error === "invalid_cookie") {
+          // A dead/invalid cookie will never recover; retire the lane.
           lane.blocked = true;
+        } else if (result.httpStatus === 403 || result.error === "challenge_or_forbidden") {
+          // 403 is often a transient CSRF/challenge; only retire the lane after
+          // repeated strikes so one hiccup does not abandon a whole source.
+          lane.authStrikes += 1;
+          if (lane.authStrikes >= CONFIG.laneAuthStrikeLimit) {
+            lane.blocked = true;
+          }
+        } else if (result.status === "blocked" || result.status === "skipped_existing_api") {
+          lane.authStrikes = 0;
         }
         return result;
       })),
@@ -2010,6 +2285,30 @@ async function runApplyLanes(pairs, output, applyOptions, cancelToken, eventLogg
     }
     printProgress(false);
     maybeAdjustAdaptiveController(controller, applyOptions, output);
+  }
+
+  // Never let queued pairs vanish. If a lane was retired (auth strikes) its
+  // leftover targets are recorded as retryable failures so they appear in the
+  // report and can be recovered by `retry-failed` instead of disappearing.
+  if (!isCancelRequested(cancelToken)) {
+    for (const lane of lanes) {
+      if (!lane.queue.length) continue;
+      const reason = lane.blocked ? "lane_retired_auth" : "not_processed";
+      for (const pair of lane.queue) {
+        const unverifiedBlockList = pair.status === "pending_unverified";
+        pair.status = "failed";
+        const report = pairReport(pair, {
+          applyMode: applyOptions.applyMode,
+          retryable: true,
+          unverifiedBlockList,
+          error: reason,
+        });
+        results.push(report);
+        recordAdaptiveResult(controller, report);
+        updateFailureMetrics(report);
+      }
+      lane.queue = [];
+    }
   }
 
   printProgress(true);
@@ -2368,6 +2667,7 @@ async function commandValidate(args) {
       invalidLines: invalid.length,
       validAccounts: accounts.filter((account) => account.valid).length,
       duplicateUserIds: duplicates.length,
+      failureBreakdown: summarizeAuthFailures(accounts),
     },
     invalid,
     duplicates,
@@ -2376,6 +2676,14 @@ async function commandValidate(args) {
   };
   ACTIVE_METRICS = null;
 
+  const validCount = report.summary.validAccounts;
+  const breakdownText = Object.entries(report.summary.failureBreakdown)
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, count]) => `${reason}:${count}`)
+    .join(", ");
+  createLogger(logger).log(
+    `Validate: ${validCount}/${accounts.length} usable.${breakdownText ? ` Unusable → ${breakdownText}` : ""}`,
+  );
   const reportPath = writeReport("validate", report);
   writeDiagnostics("validate", report);
   writeState({ accounts: accounts.map(accountReport), duplicates });
@@ -2852,7 +3160,7 @@ async function main() {
   }
 
   console.log("Roblox Block Mesh");
-  console.log("Secrets policy: passwords, cookies, and CSRF tokens are redacted and never written.");
+  console.log("Report redaction enabled.");
   console.log(`Input: ${args.cookiesFile}`);
 
   if (args.command === "validate") await commandValidate(args);
@@ -2879,6 +3187,10 @@ module.exports = {
   setRuntimeConfig,
   sanitizeError,
   parseCookiesFile,
+  parseProxyUrl,
+  redactProxy,
+  loadProxies,
+  assignProxies,
   commandValidate,
   commandPlan,
   commandSimulate,

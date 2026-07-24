@@ -47,6 +47,16 @@ create table if not exists public.jobs (
   updated_at timestamptz not null default now()
 );
 
+alter table public.jobs add column if not exists source text not null default 'web';
+alter table public.jobs drop constraint if exists jobs_source_check;
+alter table public.jobs add constraint jobs_source_check check (source in ('web', 'discord'));
+
+create table if not exists public.discord_identities (
+  discord_user_id text primary key,
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.job_reports (
   id uuid primary key default gen_random_uuid(),
   job_id uuid not null references public.jobs(id) on delete cascade,
@@ -101,6 +111,8 @@ create index if not exists wallet_ledger_user_created_idx on public.wallet_ledge
 create unique index if not exists wallet_ledger_provider_reference_unique_idx
   on public.wallet_ledger(provider, reference);
 create index if not exists jobs_user_created_idx on public.jobs(user_id, created_at desc);
+create index if not exists jobs_source_created_idx on public.jobs(source, created_at desc);
+create unique index if not exists discord_identities_profile_unique_idx on public.discord_identities(profile_id);
 create index if not exists job_reports_job_created_idx on public.job_reports(job_id, created_at desc);
 create index if not exists job_inputs_user_created_idx on public.job_inputs(user_id, created_at desc);
 create index if not exists payment_vouchers_user_created_idx on public.payment_vouchers(user_id, created_at desc);
@@ -144,6 +156,7 @@ alter table public.job_inputs enable row level security;
 alter table public.payment_vouchers enable row level security;
 alter table public.worker_nodes enable row level security;
 alter table public.audit_logs enable row level security;
+alter table public.discord_identities enable row level security;
 
 drop policy if exists "profiles_select_own" on public.profiles;
 drop policy if exists "profiles_update_own" on public.profiles;
@@ -160,6 +173,7 @@ drop policy if exists "vouchers_select_own" on public.payment_vouchers;
 drop policy if exists "vouchers_admin_select" on public.payment_vouchers;
 drop policy if exists "worker_nodes_admin_select" on public.worker_nodes;
 drop policy if exists "audit_logs_admin_select" on public.audit_logs;
+drop policy if exists "discord_identities_admin_select" on public.discord_identities;
 
 create policy "profiles_select_own" on public.profiles for select using (auth.uid() = id);
 create policy "profiles_update_own" on public.profiles for update using (auth.uid() = id);
@@ -176,3 +190,4 @@ create policy "vouchers_select_own" on public.payment_vouchers for select using 
 create policy "vouchers_admin_select" on public.payment_vouchers for select using (public.is_admin());
 create policy "worker_nodes_admin_select" on public.worker_nodes for select using (public.is_admin());
 create policy "audit_logs_admin_select" on public.audit_logs for select using (public.is_admin());
+create policy "discord_identities_admin_select" on public.discord_identities for select using (public.is_admin());

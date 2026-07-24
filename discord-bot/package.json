@@ -1,0 +1,19 @@
+{
+  "name": "blockmesh-discord-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "register": "node scripts/register-commands.mjs",
+    "verify:env": "node scripts/verify-env.mjs",
+    "check": "node --check src/index.mjs && node --check src/api.mjs && node --check src/download.mjs && node --check src/ui.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "discord.js": "^14.22.1"
+  }
+}

@@ -49,8 +49,8 @@ npm run generate:secrets
   - `PAYMENT_PROVIDER_MODE=placeholder`
   - `ALLOW_PLACEHOLDER_TOPUP=0`
   - `MAX_ACTIVE_JOBS_PER_USER=2`
-- [ ] Do not set `BLOCKMESH_LOCAL_WORKER=1` on Vercel. It is only for local development; production must use `WORKER_API_BASE`.
-- [ ] Do not set `ALLOW_PLACEHOLDER_TOPUP=1` in production. Use admin wallet adjustment until live payment verification is connected.
+- [ ] Set `BLOCKMESH_LOCAL_WORKER=0` on Vercel and configure `WORKER_API_BASE`.
+- [ ] Set `ALLOW_PLACEHOLDER_TOPUP=0` in production and use admin wallet adjustment until live payment verification is connected.
 - [ ] Run the local predeploy check successfully:
 
 ```powershell
@@ -110,12 +110,12 @@ The result should be `READY`.
 - [ ] Confirm progress appears in dashboard.
 - [ ] Confirm report cannot be generated before the job is completed/failed/cancelled.
 - [ ] Confirm final report appears.
-- [ ] Confirm duplicate worker completion callbacks do not create duplicate wallet settlement.
+- [ ] Confirm worker completion settlement remains idempotent across duplicate callbacks.
 - [ ] Confirm failed pairs refund correctly.
-- [ ] Confirm raw cookies are not present in report, logs, or DB report JSON.
+- [ ] Confirm report redaction passes for report, logs, and DB report JSON.
 - [ ] Confirm expired `job_inputs.account_text` can be cleaned.
 
-## 6. Do Not Enable Yet
+## 6. Deferred Integrations
 
 - [ ] TrueMoney live voucher redemption.
 - [ ] Public marketing launch.

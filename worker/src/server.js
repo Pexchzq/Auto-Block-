@@ -29,7 +29,8 @@ const CONFIG = {
   cliExe: process.env.BLOCKMESH_EXE || path.resolve(__dirname, "..", "..", "release", "BlockMeshCLI Sim", "blockmesh.exe"),
   cliScript: process.env.BLOCKMESH_SCRIPT || "",
   workspaceRoot: process.env.WORKER_WORKSPACE || path.resolve(__dirname, "..", ".work"),
-  concurrency: Math.max(1, Number(process.env.WORKER_CONCURRENCY || 1)),
+  // One public IP shares the same upstream rate-limit bucket. Keep jobs FIFO.
+  concurrency: 1,
   statusIntervalMs: Math.max(3000, Number(process.env.WORKER_STATUS_INTERVAL_MS || 10000)),
   cleanupSuccessfulJobs: process.env.WORKER_KEEP_WORKSPACES !== "1",
 };
@@ -99,7 +100,7 @@ function sanitizeReport(report, fallback) {
     alreadyBlocked: Number(sanitized.alreadyBlocked ?? sanitized.already_blocked ?? 0),
     failed: Number(sanitized.failed ?? 0),
     generatedAt: sanitized.generatedAt || new Date().toISOString(),
-    secretsPolicy: "cookies/passwords/tokens are never included in reports",
+    secretsPolicy: "report_redaction_enabled",
   };
   return safe;
 }

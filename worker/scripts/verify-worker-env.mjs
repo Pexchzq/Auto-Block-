@@ -61,7 +61,11 @@ if (callbackBase) {
 }
 
 passed = status("PORT", Number.isInteger(port) && port > 0 && port < 65536, String(process.env.PORT || 4567)) && passed;
-passed = status("WORKER_CONCURRENCY", Number.isInteger(concurrency) && concurrency >= 1 && concurrency <= 10, String(process.env.WORKER_CONCURRENCY || 1)) && passed;
+passed = status(
+  "WORKER_CONCURRENCY",
+  Number.isInteger(concurrency) && concurrency === 1,
+  concurrency === 1 ? "single-job FIFO" : "must be 1; runtime ignores higher values",
+) && passed;
 passed = status("WORKER_STATUS_INTERVAL_MS", Number.isInteger(statusIntervalMs) && statusIntervalMs >= 3000, String(process.env.WORKER_STATUS_INTERVAL_MS || 10000)) && passed;
 
 if (cliScript) {

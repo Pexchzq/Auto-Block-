@@ -25,7 +25,16 @@ assert.equal(invalid.ok, false, "invalid account text should fail");
 assert.deepEqual(invalid.invalidLines, [1, 2], "invalid lines should be reported without echoing secrets");
 
 const colonPassword = accounts.validateAccountInput("user:pass:with-colon:_|WARNING:-DO-NOT-SHARE-THIS", { required: true });
-assert.equal(colonPassword.ok, false, "passwords containing ':' are intentionally unsupported");
+assert.equal(colonPassword.ok, true, "cookie is anchored on _|WARNING so extra colons before it are accepted");
+
+const noPassword = accounts.validateAccountInput("crystalmoose7266:_|WARNING:-DO-NOT-SHARE-THIS", { required: true });
+assert.equal(noPassword.ok, true, "username:cookie (no password) should be accepted");
+
+const rawCookie = accounts.validateAccountInput("_|WARNING:-DO-NOT-SHARE-THIS", { required: true });
+assert.equal(rawCookie.ok, true, "a raw cookie with no metadata prefix should be accepted");
+
+const tripleForm = accounts.validateAccountInput("crystalmoose7266:FQQMNZ8TP3FG:_|WARNING:-DO-NOT-SHARE-THIS", { required: true });
+assert.equal(tripleForm.ok, true, "username:password:cookie triple should be accepted");
 
 assert.equal(pricing.getDirectedPairs(10), 90, "10 accounts should produce 90 directed pairs");
 assert.equal(pricing.getDirectedPairs(80), 6320, "80 accounts should produce 6320 directed pairs");

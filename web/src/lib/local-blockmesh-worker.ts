@@ -145,7 +145,7 @@ export async function runLocalBlockMeshJob(options: RunLocalBlockMeshOptions): P
         ...(sanitizeReportValue(report) as Record<string, unknown>),
         jobId: options.jobId,
         source: "local-blockmesh-cli",
-        secretsPolicy: "cookies/passwords/tokens are never included in reports",
+        secretsPolicy: "report_redaction_enabled",
       },
     });
 
@@ -179,7 +179,7 @@ export async function runLocalBlockMeshJob(options: RunLocalBlockMeshOptions): P
         source: "local-blockmesh-cli",
         failed: true,
         error: error instanceof Error ? error.message : "Unknown worker error",
-        secretsPolicy: "cookies/passwords/tokens are never included in reports",
+        secretsPolicy: "report_redaction_enabled",
       },
     });
   } finally {

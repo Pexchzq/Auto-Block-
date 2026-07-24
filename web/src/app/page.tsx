@@ -815,7 +815,7 @@ function CreateJobPanel({
           <Zap size={17} /> Create Draft
         </button>
       </div>
-      <div className="secure-note"><LockKeyhole size={15} /> {detectedCount ? `${formatNumber(detectedCount)} pasted lines detected` : `${formatNumber(accountCount)} accounts selected`} · secrets stay out of reports</div>
+      <div className="secure-note"><LockKeyhole size={15} /> {detectedCount ? `${formatNumber(detectedCount)} pasted lines detected` : `${formatNumber(accountCount)} accounts selected`}</div>
     </section>
   );
 }
@@ -905,7 +905,7 @@ function AuthGate({
       <div className="auth-gate-copy">
         <StatusChip tone="cyan" label="SECURE OPERATOR ACCESS" icon={<ShieldCheck size={14} />} />
         <h1>Login to launch your BlockMesh command console.</h1>
-        <p>Create jobs, reserve wallet balance, track worker progress, and download sanitized reports from one controlled session.</p>
+        <p>Create jobs, reserve wallet balance, track worker progress, and download reports from one controlled session.</p>
         <div className="auth-feature-strip">
           <span><LockKeyhole size={15} /> Wallet ledger</span>
           <span><Radar size={15} /> Worker monitor</span>
@@ -965,7 +965,7 @@ function SupabaseSetupGate() {
         </div>
         <div className="auth-error">
           <AlertTriangle size={15} />
-          Do not put service role keys or worker tokens in client-side code. Add them only in Vercel Environment Variables.
+          Configure the server environment variables in Vercel to continue.
         </div>
       </div>
     </section>
@@ -1111,14 +1111,14 @@ function RecentWalletActivity({ currentCostBaht, job, walletBalance, walletEvent
 function ReportConsole({ busy, job, onLoadReport, report }: { busy: string | null; job: JobSummary | null; onLoadReport: () => void; report: Record<string, unknown> | null }) {
   return (
     <section className="console-panel report-panel">
-      <PanelTitle icon={<FileText size={18} />} kicker="SANITIZED OUTPUT" title="Report Console" />
+      <PanelTitle icon={<FileText size={18} />} kicker="JOB OUTPUT" title="Report Console" />
       <div className="report-toolbar">
         <StatusChip tone={report ? "green" : "gold"} icon={<CheckCircle2 size={14} />} label={report ? "loaded" : "pending"} />
         <button className="action-button secondary" onClick={onLoadReport} disabled={!job || busy === "report"}>
           <Download size={16} /> Load Report
         </button>
       </div>
-      <pre className={report ? "report-box reveal" : "report-box"}>{report ? JSON.stringify(report, null, 2) : "No report loaded yet.\nReports never include cookies, passwords, or tokens."}</pre>
+      <pre className={report ? "report-box reveal" : "report-box"}>{report ? JSON.stringify(report, null, 2) : "No report loaded yet."}</pre>
     </section>
   );
 }

@@ -13,7 +13,7 @@ External worker service for BlockMesh Web. Vercel should not run long BlockMesh 
    - `POST /api/worker/jobs/{jobId}/complete`
 6. Deletes the temporary cookie file.
 
-The worker never sends raw cookies back to the web app in reports. The callback report should contain only counters, timing, and sanitized diagnostics. Secret-looking report keys such as `cookie`, `password`, `token`, `csrf`, and `authorization` are redacted before callback, and the web callback sanitizes again before writing the report.
+The callback report contains counters, timing, and sanitized diagnostics. Report keys such as `cookie`, `password`, `token`, `csrf`, and `authorization` pass through redaction before callback, and the web callback sanitizes the report again before writing it.
 
 ## Setup
 
@@ -113,11 +113,12 @@ Queued jobs are cancelled immediately. Running jobs are terminated and reported 
 ## Deployment Notes
 
 - Run this on a normal long-running Node host, not Vercel serverless.
-- Start with `WORKER_CONCURRENCY=1`.
+- The runtime is locked to one active job and FIFO scheduling. Values above
+  `WORKER_CONCURRENCY=1` are rejected by the readiness check and ignored by the
+  worker.
 - Put the worker behind a firewall or private network if possible.
 - Use HTTPS if the worker is public.
 - Keep `WORKER_API_TOKEN` long, random, and identical to the web app token.
-- Never log the raw request body.
 - Keep `WORKER_KEEP_WORKSPACES=0` in production.
 - Monitor `.work` disk usage if you enable debug workspaces.
 

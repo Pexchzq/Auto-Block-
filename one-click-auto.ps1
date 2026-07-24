@@ -185,30 +185,53 @@ if ($AccountLimit -gt 0) {
 }
 
 Write-Host "Block Mesh One-Click ($Mode / $SpeedProfile)" -ForegroundColor Green
-Write-Host "Cookies stay local. Reports are sanitized."
+Write-Host "Runtime initialized."
 
 $expectedAccounts = 0
 $validateJson = $null
+# Failure reasons that never recover by retrying: skip these accounts and run
+# the mesh on the usable ones instead of waiting.
+$permanentReasons = @("invalid_cookie", "moderated", "banned", "challenge_captcha", "challenge_2fa", "challenge_verification", "forbidden_unknown")
 for ($attempt = 1; $attempt -le 4; $attempt += 1) {
   Invoke-Step "validate" (@("block-mesh.js", "validate", "--cookies", "cookies.txt", "--validate-concurrency", "10") + $limitArgs)
   $validateJson = Show-ReportSummary (Get-LatestReport).FullName
-  if ($validateJson.summary -and $null -ne $validateJson.summary.parsedAccounts) {
-    $expectedAccounts = [int]$validateJson.summary.parsedAccounts
+  $parsedAccounts = 0
+  $usableAccounts = 0
+  if ($validateJson.summary) {
+    if ($null -ne $validateJson.summary.parsedAccounts) { $parsedAccounts = [int]$validateJson.summary.parsedAccounts }
+    if ($null -ne $validateJson.summary.validAccounts) { $usableAccounts = [int]$validateJson.summary.validAccounts }
   }
-  $validAccounts = 0
-  if ($validateJson.summary -and $null -ne $validateJson.summary.validAccounts) {
-    $validAccounts = [int]$validateJson.summary.validAccounts
+
+  # Split failures into transient (worth a retry) vs permanent (skip now).
+  $transientFailures = 0
+  $breakdownText = ""
+  if ($validateJson.summary -and $validateJson.summary.failureBreakdown) {
+    foreach ($p in $validateJson.summary.failureBreakdown.PSObject.Properties) {
+      $breakdownText += "$($p.Name):$($p.Value) "
+      if ($permanentReasons -notcontains $p.Name) { $transientFailures += [int]$p.Value }
+    }
   }
-  if ($expectedAccounts -gt 0 -and $validAccounts -ge $expectedAccounts) {
+
+  if ($usableAccounts -le 0) {
+    throw "validate found 0 usable accounts. Check cookies.txt. Breakdown: $breakdownText"
+  }
+
+  if ($transientFailures -eq 0) {
+    Write-Host "validate: $usableAccounts/$parsedAccounts usable. Skipping permanently-unusable accounts. $breakdownText" -ForegroundColor Green
     break
   }
   if ($attempt -ge 4) {
-    throw "validate only found $validAccounts/$expectedAccounts accounts after $attempt attempts. Stop before incomplete mesh."
+    Write-Host "validate: $usableAccounts/$parsedAccounts usable after $attempt attempts. Proceeding with usable accounts. $breakdownText" -ForegroundColor Yellow
+    break
   }
+
   $wait = 60 + ($attempt * 30)
-  Write-Host "validate found only $validAccounts/$expectedAccounts accounts. Waiting $wait seconds before retry." -ForegroundColor Yellow
+  Write-Host "validate: $transientFailures transient failures may recover. Waiting $wait s then retry. $breakdownText" -ForegroundColor Yellow
   Start-Sleep -Seconds $wait
 }
+# Expect only the usable accounts downstream, so moderated/banned cookies are
+# skipped rather than blocking the whole run.
+$expectedAccounts = $usableAccounts
 Invoke-Step "diagnose-validate" @("block-mesh.js", "diagnose")
 
 Invoke-Step "plan" (@("block-mesh.js", "plan", "--cookies", "cookies.txt", "--use-state-auth", "--summary-only", "--allow-unverified-blocklist", "--skip-block-list-check") + $limitArgs)
@@ -225,7 +248,9 @@ Invoke-Step "diagnose-plan" @("block-mesh.js", "diagnose")
 if ($expectedAccounts -lt 120) {
   $simStep = Invoke-ValidatedStep "simulate" ($common[0..0] + @("simulate") + $common[1..($common.Length - 1)] + @("--simulation-profile", "mixed")) $expectedAccounts 2 30
   $simReport = Get-Item -LiteralPath $simStep.Path
-  Copy-Item -LiteralPath $simReport.FullName -Destination (Join-Path $Root "Sim") -Force
+  $simArchiveDir = Join-Path $Root "Sim"
+  New-Item -ItemType Directory -Force -Path $simArchiveDir | Out-Null
+  Copy-Item -LiteralPath $simReport.FullName -Destination (Join-Path $simArchiveDir $simReport.Name) -Force
   $simJson = $simStep.Report
   Invoke-Step "diagnose-simulate" @("block-mesh.js", "diagnose")
   Show-DiagnosticSummary

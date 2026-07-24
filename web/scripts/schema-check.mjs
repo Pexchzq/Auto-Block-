@@ -21,6 +21,7 @@ for (const table of [
   "payment_vouchers",
   "worker_nodes",
   "audit_logs",
+  "discord_identities",
 ]) {
   includes(`create table if not exists public.${table}`, `missing table ${table}`);
   includes(`alter table public.${table} enable row level security`, `missing RLS enable for ${table}`);
@@ -40,6 +41,7 @@ for (const policy of [
   "vouchers_admin_select",
   "worker_nodes_admin_select",
   "audit_logs_admin_select",
+  "discord_identities_admin_select",
 ]) {
   includes(`create policy "${policy}"`, `missing policy ${policy}`);
 }
@@ -53,5 +55,9 @@ includes("status text not null check (status in ('draft', 'queued', 'running', '
 includes("type text not null check (type in ('topup', 'reserve', 'capture', 'refund', 'manual_adjust'))", "missing wallet ledger type constraint");
 includes("account_count integer not null check (account_count between 2 and 5000)", "missing account count safety constraint");
 includes("account_text text not null", "missing encrypted account text storage column");
+includes("alter table public.jobs add column if not exists source text not null default 'web'", "missing jobs source column migration");
+includes("add constraint jobs_source_check check (source in ('web', 'discord'))", "missing jobs source constraint");
+includes("discord_user_id text primary key", "missing Discord identity key");
+includes("profile_id uuid not null references public.profiles(id) on delete cascade", "missing Discord profile mapping");
 
 console.log("Schema check passed.");
