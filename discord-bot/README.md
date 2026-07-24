@@ -60,6 +60,7 @@ DISCORD_BOT_TOKEN=Bot Token
 DISCORD_CLIENT_ID=Application ID
 DISCORD_GUILD_ID=Server ID
 DISCORD_PANEL_CHANNEL_ID=Channel ID
+DISCORD_PANEL_MESSAGE_ID=Panel message ID สำหรับอัปเดตคิวแบบ live
 DISCORD_ALLOWED_ROLE_IDS=Role ID หนึ่งตัวหรือหลายตัวคั่นด้วย comma
 WEB_API_BASE=https://โดเมนเว็บจริง
 BOT_API_TOKEN=ค่าเดียวกับบน Vercel
@@ -74,6 +75,11 @@ BOT_API_TOKEN=ค่าเดียวกับบน Vercel
 - `/block submit` เปิดฟอร์มสร้างงาน
 - `/block status job_id:<id>` ดูสถานะงานของตัวเอง
 - `/block wallet` ดูข้อมูลผู้ใช้และงานล่าสุด
+
+Panel หลักมีปุ่ม `เติมเงิน`, `ข้อมูลผู้ใช้` และ `เครื่องมือ` ผู้ใช้ต้องเลือก
+`บล็อคไอดี v1` จากเมนูเครื่องมือก่อนเปิดแบบฟอร์มส่งไฟล์ คิวใน panel จะรีเฟรช
+ตาม `DISCORD_PANEL_REFRESH_MS` และ GIF เริ่มต้นอยู่ที่
+`discord-bot/assets/orions-panel-v1.gif`
 
 ## การรันระยะยาว
 

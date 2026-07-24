@@ -20,6 +20,10 @@ import {
   panelComponents,
   panelEmbed,
   statusEmbed,
+  toolPickerComponents,
+  toolPickerEmbed,
+  topUpComponents,
+  topUpEmbed,
   userEmbed,
 } from "./ui.mjs";
 
@@ -30,6 +34,9 @@ const CONFIG = {
   guildId: requiredEnv("DISCORD_GUILD_ID"),
   allowedRoleIds: csvEnv("DISCORD_ALLOWED_ROLE_IDS"),
   panelChannelId: String(process.env.DISCORD_PANEL_CHANNEL_ID || "").trim(),
+  panelMessageId: String(process.env.DISCORD_PANEL_MESSAGE_ID || "").trim(),
+  panelRefreshMs: Math.max(15_000, Number(process.env.DISCORD_PANEL_REFRESH_MS || 30_000)),
+  topUpUrl: String(process.env.DISCORD_TOPUP_URL || "https://auto-block.vercel.app").trim(),
   pollIntervalMs: Math.max(5_000, Number(process.env.POLL_INTERVAL_MS || 10_000)),
   reportMaxBytes: Math.max(256_000, Number(process.env.DISCORD_REPORT_MAX_BYTES || 7_500_000)),
 };
@@ -47,9 +54,10 @@ const pendingDmMessages = new Map();
 const monitors = new Map();
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
-function privateReply(interaction, content) {
+function privateReply(interaction, payload) {
+  const reply = typeof payload === "string" ? { content: payload } : payload;
   return interaction.reply({
-    content,
+    ...reply,
     ...(interaction.inGuild() ? { flags: MessageFlags.Ephemeral } : {}),
   });
 }
@@ -82,8 +90,8 @@ function submitModal() {
     .setMaxLength(1_000);
 
   return new ModalBuilder()
-    .setCustomId("blockmesh:submit")
-    .setTitle("สร้างงาน Orions")
+    .setCustomId("orions:block-id-v1:submit")
+    .setTitle("บล็อคไอดี v1")
     .addComponents(new ActionRowBuilder().addComponents(linkInput));
 }
 
@@ -96,8 +104,8 @@ async function openSubmission(interaction) {
       embeds: [
         new EmbedBuilder()
           .setColor(0xff7900)
-          .setTitle("พร้อมรับงาน Orions")
-          .setDescription("กำลังรอข้อมูลจากแบบฟอร์ม ระบบจะอัปเดตสถานะงานในข้อความนี้"),
+          .setTitle("บล็อคไอดี v1")
+          .setDescription("กำลังรอลิงก์ไฟล์ ระบบจะอัปเดตสถานะและแนบรายงานใน DM ข้อความนี้"),
       ],
     });
   } catch {
@@ -150,7 +158,7 @@ function reportAttachment(job, report) {
       "utf8",
     );
   }
-  return new AttachmentBuilder(buffer, { name: `blockmesh-report-${job.jobId}.json` });
+  return new AttachmentBuilder(buffer, { name: `orions-report-${job.jobId}.json` });
 }
 
 async function finishMonitor(entry, job) {
@@ -168,6 +176,7 @@ async function finishMonitor(entry, job) {
     files: [reportAttachment(job, report)],
   });
   monitors.delete(job.jobId);
+  void refreshPanel();
 }
 
 async function pollMonitor(jobId) {
@@ -210,6 +219,7 @@ function monitorJob(discordUserId, job, message) {
     polling: false,
     timer: setTimeout(() => void pollMonitor(job.jobId), 1_000),
   });
+  void refreshPanel();
 }
 
 async function handleSubmission(interaction) {
@@ -268,6 +278,28 @@ async function showUser(interaction) {
   }
 }
 
+async function showTopUp(interaction) {
+  if (!(await requireAllowedUser(interaction))) return;
+  await privateDefer(interaction);
+  try {
+    const user = await getUser(interaction.user.id);
+    await interaction.editReply({
+      embeds: [topUpEmbed(user)],
+      components: topUpComponents(CONFIG.topUpUrl),
+    });
+  } catch (error) {
+    await interaction.editReply(`อ่านข้อมูลเติมเงินไม่สำเร็จ: ${safeError(error)}`);
+  }
+}
+
+async function showTools(interaction) {
+  if (!(await requireAllowedUser(interaction))) return;
+  await privateReply(interaction, {
+    embeds: [toolPickerEmbed()],
+    components: toolPickerComponents(),
+  });
+}
+
 async function showStatus(interaction) {
   if (!(await requireAllowedUser(interaction))) return;
   await privateDefer(interaction);
@@ -280,6 +312,40 @@ async function showStatus(interaction) {
   }
 }
 
+function queueStats(entries, online = true) {
+  const stats = { online, queued: 0, running: 0, retrying: 0 };
+  for (const entry of entries || []) {
+    const status = String(entry?.job?.status || entry?.status || "");
+    if (status === "queued") stats.queued += 1;
+    if (status === "running") stats.running += 1;
+    if (status === "retrying") stats.retrying += 1;
+  }
+  return stats;
+}
+
+async function readQueueStats() {
+  try {
+    const response = await getActiveJobs();
+    return queueStats(response.jobs || []);
+  } catch (error) {
+    console.error(`Panel queue lookup failed: ${safeError(error)}`);
+    return queueStats([], false);
+  }
+}
+
+async function refreshPanel() {
+  if (!CONFIG.panelChannelId || !CONFIG.panelMessageId) return null;
+  const channel = await client.channels.fetch(CONFIG.panelChannelId).catch(() => null);
+  if (!channel?.isTextBased() || !channel.messages) return null;
+  const message = await channel.messages.fetch(CONFIG.panelMessageId).catch(() => null);
+  if (!message) return null;
+  await message.edit({
+    embeds: [panelEmbed(await readQueueStats())],
+    components: panelComponents(),
+  });
+  return message;
+}
+
 async function installPanel(interaction) {
   const channelId = CONFIG.panelChannelId || interaction.channelId;
   const channel = await client.channels.fetch(channelId).catch(() => null);
@@ -287,24 +353,32 @@ async function installPanel(interaction) {
     await privateReply(interaction, "ไม่พบ text channel สำหรับติดตั้ง control panel");
     return;
   }
-  await channel.send({ embeds: [panelEmbed()], components: panelComponents() });
-  await privateReply(interaction, `ติดตั้ง Orions panel ใน <#${channel.id}> แล้ว`);
+  const stats = await readQueueStats();
+  const existing = CONFIG.panelMessageId
+    ? await channel.messages.fetch(CONFIG.panelMessageId).catch(() => null)
+    : null;
+  const message = existing
+    ? await existing.edit({ embeds: [panelEmbed(stats)], components: panelComponents() })
+    : await channel.send({ embeds: [panelEmbed(stats)], components: panelComponents() });
+  await privateReply(
+    interaction,
+    `${existing ? "อัปเดต" : "ติดตั้ง"} Orions panel ใน <#${channel.id}> แล้ว (message: ${message.id})`,
+  );
 }
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isButton()) {
-      if (interaction.customId === "blockmesh:create") return await openSubmission(interaction);
-      if (interaction.customId === "blockmesh:user") return await showUser(interaction);
-      if (interaction.customId === "blockmesh:tools") {
-        return await privateReply(
-          interaction,
-          "อัปโหลดไฟล์ `.txt` ไปยัง Discord แล้วคัดลอกลิงก์ไฟล์ จากนั้นกด **สร้างงาน** และวางลิงก์ในแบบฟอร์ม ผลลัพธ์จะส่งทาง DM",
-        );
-      }
+      if (interaction.customId === "orions:topup") return await showTopUp(interaction);
+      if (interaction.customId === "orions:user") return await showUser(interaction);
+      if (interaction.customId === "orions:tools") return await showTools(interaction);
     }
 
-    if (interaction.isModalSubmit() && interaction.customId === "blockmesh:submit") {
+    if (interaction.isStringSelectMenu() && interaction.customId === "orions:tool-select") {
+      if (interaction.values[0] === "block-id-v1") return await openSubmission(interaction);
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === "orions:block-id-v1:submit") {
       return await handleSubmission(interaction);
     }
 
@@ -340,6 +414,12 @@ client.once(Events.ClientReady, async (readyClient) => {
   } catch (error) {
     console.error(`Active job recovery failed: ${safeError(error)}`);
   }
+
+  await refreshPanel().catch((error) => {
+    console.error(`Initial panel refresh failed: ${safeError(error)}`);
+  });
+  const panelTimer = setInterval(() => void refreshPanel(), CONFIG.panelRefreshMs);
+  panelTimer.unref();
 });
 
 process.on("unhandledRejection", (error) => {
