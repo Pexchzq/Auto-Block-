@@ -59,5 +59,8 @@ includes("alter table public.jobs add column if not exists source text not null 
 includes("add constraint jobs_source_check check (source in ('web', 'discord'))", "missing jobs source constraint");
 includes("discord_user_id text primary key", "missing Discord identity key");
 includes("profile_id uuid not null references public.profiles(id) on delete cascade", "missing Discord profile mapping");
+includes("grant usage on schema public to anon, authenticated, service_role", "missing API schema grants");
+includes("grant all privileges on all tables in schema public to service_role", "missing service role table grants");
+includes("alter default privileges in schema public grant all privileges on tables to service_role", "missing future service role table grants");
 
 console.log("Schema check passed.");

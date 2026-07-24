@@ -191,3 +191,20 @@ create policy "vouchers_admin_select" on public.payment_vouchers for select usin
 create policy "worker_nodes_admin_select" on public.worker_nodes for select using (public.is_admin());
 create policy "audit_logs_admin_select" on public.audit_logs for select using (public.is_admin());
 create policy "discord_identities_admin_select" on public.discord_identities for select using (public.is_admin());
+
+-- SQL Editor-created objects do not always inherit the API role grants that
+-- Supabase applies to dashboard-created tables. RLS remains the data boundary.
+grant usage on schema public to anon, authenticated, service_role;
+grant select on all tables in schema public to anon;
+grant select, insert, update, delete on all tables in schema public to authenticated;
+grant all privileges on all tables in schema public to service_role;
+grant usage, select on all sequences in schema public to authenticated;
+grant all privileges on all sequences in schema public to service_role;
+grant execute on all functions in schema public to anon, authenticated, service_role;
+
+alter default privileges in schema public grant select on tables to anon;
+alter default privileges in schema public grant select, insert, update, delete on tables to authenticated;
+alter default privileges in schema public grant all privileges on tables to service_role;
+alter default privileges in schema public grant usage, select on sequences to authenticated;
+alter default privileges in schema public grant all privileges on sequences to service_role;
+alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
