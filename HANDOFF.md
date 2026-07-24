@@ -1,5 +1,104 @@
 # BlockMesh Project Handoff
 
+## Current status - 2026-07-24
+
+Production is live at:
+
+```text
+https://auto-block.vercel.app/
+```
+
+Repository:
+
+```text
+https://github.com/Pexchzq/Auto-Block-
+branch: main
+latest verified commit: 8412ca5
+```
+
+### Completed and verified
+
+- Supabase schema was applied to project `ykdrdyzsuscpromlgnlp`.
+- Supabase API grants, RLS setup, auth, admin profile, wallet ledger, jobs,
+  encrypted job inputs, reports, Discord identities, worker nodes, and audit
+  logs are present.
+- Vercel production environment is configured for Supabase, encrypted job
+  input, worker dispatch, bot API, quota, and placeholder payment mode.
+- Production `/admin` reports Supabase, worker, dispatch, encryption, quota,
+  and payment configuration as ready.
+- The local external worker is reachable through a temporary Cloudflare Quick
+  Tunnel. The current tunnel host can be read from:
+
+  ```powershell
+  Invoke-RestMethod http://127.0.0.1:20241/quicktunnel
+  ```
+
+- A full production job test using two deliberately fake accounts completed:
+  wallet reserve -> Vercel dispatch -> local worker -> production callback ->
+  sanitized report -> failed-pair refund.
+- Final pair accounting now guarantees:
+
+  ```text
+  blocked + alreadyBlocked + failed = directedPairs
+  ```
+
+  Missing/unreported outcomes become failed and refundable. This fix is in
+  commit `8412ca5`.
+- Web checks passed: unit check, ESLint, TypeScript, and production build.
+- Discord bot checks passed: syntax check and 5/5 tests.
+- Production accepts the configured `BOT_API_TOKEN`.
+
+### Local services that must stay running
+
+- Worker: `http://127.0.0.1:4567`
+- Cloudflare tunnel metrics: `http://127.0.0.1:20241`
+
+The Quick Tunnel hostname is temporary. If cloudflared restarts, update
+`WORKER_API_BASE` in Vercel and redeploy.
+
+The worker fallback callback is configured locally as:
+
+```text
+WEB_CALLBACK_BASE=https://auto-block.vercel.app
+```
+
+Do not commit `.env` files or print Supabase, worker, bot, Discord, or cookie
+secrets.
+
+### Discord bot - next required action
+
+Discord Developer Portal is open in Chrome while creating a new application
+named `BlockMesh`. It is currently waiting for the user to solve hCaptcha.
+After the user solves it:
+
+1. Create/enable the bot and copy the Bot Token once.
+2. Read the Application ID.
+3. Invite the bot to the target server with bot/application command scopes.
+4. Collect the server ID, panel channel ID, and allowed role ID(s).
+5. Fill the ignored `discord-bot/.env`.
+6. Run:
+
+   ```powershell
+   npm run verify:env
+   npm run register
+   npm start
+   ```
+
+7. Publish the panel and test: panel -> modal -> Discord attachment URL ->
+   DM progress -> final sanitized report.
+
+### Working tree warning
+
+The following changes belong to another user/agent task and were intentionally
+left untouched:
+
+```text
+M  block-mesh.js
+?? experiments/speed-lab/block-mesh.js
+```
+
+Review ownership before staging or committing them.
+
 ## 📌 งานถัดไปที่ต้องทำ (สำหรับ Codex)
 
 **อ่าน [`docs/discord-bot-spec.md`](docs/discord-bot-spec.md) ก่อนเริ่มงานนี้** —
