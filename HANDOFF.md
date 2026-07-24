@@ -499,9 +499,15 @@ Allowed roles:
 - เปิด Orions bot process บนเครื่อง local
 - ส่ง Orions control panel ไปยัง panel channel
 - ตรวจ message กลับจาก Discord แล้วว่าข้อความไทยและปุ่มแสดงถูกต้อง
+- รีดีไซน์ panel เป็นปุ่ม `เติมเงิน`, `ข้อมูลผู้ใช้`, `เครื่องมือ`
+- เมนู `เครื่องมือ` รองรับ tool registry และเริ่มด้วย `บล็อคไอดี v1`
+- เพิ่ม GIF `discord-bot\assets\orions-panel-v1.gif`
+- เพิ่มสถานะ ONLINE และ live queue: queued/running/retrying รีเฟรชทุก 30 วินาที
+- ตั้ง `DISCORD_PANEL_MESSAGE_ID=1530182950921044225` เพื่ออัปเดตข้อความเดิม
+  แทนการส่ง panel ซ้ำ
 - ตรวจ Bot API ด้วย Discord guild owner แล้วได้ HTTP 200
 - `npm run check` ผ่าน
-- `npm test` ผ่าน 5/5
+- `npm test` ผ่าน 9/9
 
 ไฟล์ secret/runtime ต่อไปนี้ยังถูก ignore และห้าม commit:
 
