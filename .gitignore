@@ -22,6 +22,7 @@ release/
 *.zip
 worker/.env
 worker/.work/
+worker/.tools/
 worker/**/*.log
 discord-bot/.env
 discord-bot/**/*.log
