@@ -69,11 +69,135 @@ function providerEndpoint(): URL {
   return new URL(path, base);
 }
 
+function normalizeThaiMobile(value: string): string {
+  const mobile = String(value || "").replace(/\D/g, "");
+  if (!/^0\d{9}$/.test(mobile)) {
+    throw new TrueMoneyProviderError("ANGPAO_PHONE must be a 10-digit Thai mobile number", 503, "invalid_receiver_phone");
+  }
+  return mobile;
+}
+
+function directAngpaoBase(): URL {
+  const configured = String(process.env.ANGPAO_API_BASE || "").trim();
+  const base = new URL(configured || "https://gift.truemoney.com/campaign/vouchers/");
+  const local = ["127.0.0.1", "localhost"].includes(base.hostname);
+  if (base.protocol !== "https:" && !(local && process.env.NODE_ENV !== "production")) {
+    throw new TrueMoneyProviderError("Angpao endpoint must use HTTPS", 503, "insecure_angpao_url");
+  }
+  return new URL(base.href.endsWith("/") ? base.href : `${base.href}/`);
+}
+
+function directAngpaoConfigured(): boolean {
+  return /^0\d{9}$/.test(String(process.env.ANGPAO_PHONE || "").replace(/\D/g, ""));
+}
+
+function directAngpaoError(code: string, httpStatus: number): TrueMoneyProviderError {
+  const normalized = code.toUpperCase();
+  if (["VOUCHER_OUT_OF_STOCK", "VOUCHER_EXPIRED", "TARGET_USER_REDEEMED"].includes(normalized)) {
+    return new TrueMoneyProviderError("This TrueMoney voucher has already been redeemed or has expired", 409, normalized.toLowerCase());
+  }
+  if (["VOUCHER_NOT_FOUND", "INVALID_VOUCHER"].includes(normalized)) {
+    return new TrueMoneyProviderError("TrueMoney voucher was not found", 404, normalized.toLowerCase());
+  }
+  if (normalized === "CANNOT_GET_OWN_VOUCHER") {
+    return new TrueMoneyProviderError("The receiving wallet cannot redeem its own voucher", 422, normalized.toLowerCase());
+  }
+  if (httpStatus === 429 || normalized.includes("RATE_LIMIT")) {
+    return new TrueMoneyProviderError("TrueMoney temporarily rate limited this request", 429, "provider_rate_limited");
+  }
+  return new TrueMoneyProviderError(
+    `TrueMoney voucher redemption was rejected (${safeProviderMessage(code || `HTTP_${httpStatus}`)})`,
+    httpStatus >= 500 ? 502 : 422,
+    normalized.toLowerCase().slice(0, 80) || "voucher_rejected",
+  );
+}
+
+async function redeemDirectAngpaoVoucher(
+  voucherUrl: string,
+  reference: string,
+): Promise<TrueMoneyRedeemResult> {
+  if (!directAngpaoConfigured()) {
+    throw new TrueMoneyProviderError("ANGPAO_PHONE is missing or invalid", 503, "not_configured");
+  }
+  if (!isValidTrueMoneyVoucherUrl(voucherUrl)) {
+    throw new TrueMoneyProviderError("Invalid TrueMoney voucher URL format", 400, "invalid_voucher_url");
+  }
+
+  const voucherHash = new URL(voucherUrl).searchParams.get("v")?.trim() || "";
+  if (!/^[0-9A-Za-z]{20,}$/.test(voucherHash)) {
+    throw new TrueMoneyProviderError("Invalid TrueMoney voucher code", 400, "invalid_voucher_code");
+  }
+
+  const timeoutMs = Math.min(60_000, Math.max(3_000, Number(process.env.TRUEMONEY_TIMEOUT_MS || 20_000)));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const endpoint = new URL(`${encodeURIComponent(voucherHash)}/redeem`, directAngpaoBase());
+    const response = await fetch(endpoint, {
+      method: "POST",
+      cache: "no-store",
+      signal: controller.signal,
+      headers: {
+        "content-type": "application/json",
+        "accept": "application/json",
+        "user-agent": "Orions-Angpao/1.0",
+      },
+      body: JSON.stringify({
+        mobile: normalizeThaiMobile(String(process.env.ANGPAO_PHONE || "")),
+        voucher_hash: voucherHash,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    const root = asRecord(payload);
+    const status = asRecord(root.status);
+    const data = asRecord(root.data);
+    const ticket = asRecord(data.my_ticket);
+    const voucher = asRecord(data.voucher);
+    const providerCode = firstString(status.code, root.code, response.ok ? "UNKNOWN" : `HTTP_${response.status}`);
+
+    if (!response.ok || providerCode.toUpperCase() !== "SUCCESS") {
+      throw directAngpaoError(providerCode, response.status);
+    }
+
+    const amountBaht = firstNumber(ticket.amount_baht, voucher.amount_baht);
+    const maxAmount = Math.max(1, Number(process.env.TRUEMONEY_MAX_TOPUP_BAHT || 100_000));
+    if (!Number.isFinite(amountBaht) || amountBaht <= 0 || amountBaht > maxAmount) {
+      throw new TrueMoneyProviderError("TrueMoney returned an invalid voucher amount", 502, "invalid_provider_amount");
+    }
+
+    return {
+      accepted: true,
+      amountBaht: Math.round(amountBaht * 100) / 100,
+      transactionId: firstString(
+        ticket.id,
+        ticket.ticket_id,
+        ticket.reference,
+        reference,
+      ).slice(0, 200),
+      providerStatus: "redeemed",
+    };
+  } catch (error) {
+    if (error instanceof TrueMoneyProviderError) throw error;
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new TrueMoneyProviderError("TrueMoney request timed out", 504, "provider_timeout");
+    }
+    throw new TrueMoneyProviderError("TrueMoney request failed", 502, "provider_network_error");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function trueMoneyProviderConfigured(): boolean {
+  if (paymentProviderModeIsAngpao()) return directAngpaoConfigured();
   return Boolean(
     String(process.env.TRUEMONEY_API_BASE || "").trim()
     && String(process.env.TRUEMONEY_API_TOKEN || "").trim(),
   );
+}
+
+function paymentProviderModeIsAngpao(): boolean {
+  return String(process.env.PAYMENT_PROVIDER_MODE || "").trim().toLowerCase() === "angpao";
 }
 
 export function trueMoneyVoucherReference(voucherUrl: string): {
@@ -148,6 +272,9 @@ export async function redeemTrueMoneyVoucher(
 ): Promise<TrueMoneyRedeemResult> {
   if (!trueMoneyProviderConfigured()) {
     throw new TrueMoneyProviderError("TrueMoney provider credentials are missing", 503, "not_configured");
+  }
+  if (paymentProviderModeIsAngpao()) {
+    return redeemDirectAngpaoVoucher(voucherUrl, reference);
   }
 
   const timeoutMs = Math.min(60_000, Math.max(3_000, Number(process.env.TRUEMONEY_TIMEOUT_MS || 20_000)));

@@ -4,6 +4,34 @@ BlockMesh never redeems a voucher in the browser or Discord process. Both client
 voucher URL to the Next.js server, which hashes the voucher code and forwards it to a
 server-side provider.
 
+## Direct Angpao Mode
+
+For the bundled direct adapter:
+
+```env
+PAYMENT_PROVIDER_MODE=angpao
+ANGPAO_PHONE=0xxxxxxxxx
+ALLOW_PLACEHOLDER_TOPUP=0
+```
+
+`ANGPAO_PHONE` is the wallet receiving number. Keep it server-side and never prefix it with
+`NEXT_PUBLIC_`. In this mode, `TRUEMONEY_API_BASE` and `TRUEMONEY_API_TOKEN` are not used.
+The website and Discord bot continue to call the same wallet top-up API, so voucher
+deduplication and wallet-ledger crediting remain centralized in Supabase.
+
+The direct gift-voucher endpoint is not an official public TrueMoney API and can change or
+be blocked without notice. Keep the external provider mode below as a migration path.
+
+## External Provider Mode
+
+Use these settings when redemption is handled by a separate approved provider:
+
+```env
+PAYMENT_PROVIDER_MODE=truemoney
+TRUEMONEY_API_BASE=https://provider.example/
+TRUEMONEY_API_TOKEN=replace-with-provider-token
+```
+
 ## Redeem Request
 
 ```http

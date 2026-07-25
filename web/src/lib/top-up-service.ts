@@ -93,7 +93,7 @@ export async function topUpWalletWithVoucher(input: {
     }
     return creditPlaceholder(input.admin, input.userId, reference, rawHash);
   }
-  if (!["truemoney", "live"].includes(mode) || !trueMoneyProviderConfigured()) {
+  if (!["truemoney", "live", "angpao"].includes(mode) || !trueMoneyProviderConfigured()) {
     throw new TopUpServiceError(503, "TrueMoney live provider is not configured", "provider_not_configured");
   }
 

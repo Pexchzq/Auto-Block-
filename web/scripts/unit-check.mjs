@@ -125,6 +125,58 @@ else process.env.TRUEMONEY_API_BASE = originalProviderBase;
 if (originalProviderToken === undefined) delete process.env.TRUEMONEY_API_TOKEN;
 else process.env.TRUEMONEY_API_TOKEN = originalProviderToken;
 
+const originalPaymentMode = process.env.PAYMENT_PROVIDER_MODE;
+const originalAngpaoPhone = process.env.ANGPAO_PHONE;
+const originalAngpaoBase = process.env.ANGPAO_API_BASE;
+const angpaoRequests = [];
+const angpaoServer = createServer((request, response) => {
+  let body = "";
+  request.setEncoding("utf8");
+  request.on("data", (chunk) => { body += chunk; });
+  request.on("end", () => {
+    angpaoRequests.push({
+      method: request.method,
+      url: request.url,
+      body: JSON.parse(body),
+    });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      status: { code: "SUCCESS" },
+      data: {
+        my_ticket: {
+          id: "angpao-ticket-1",
+          amount_baht: "88.25",
+        },
+      },
+    }));
+  });
+});
+await new Promise((resolve) => angpaoServer.listen(0, "127.0.0.1", resolve));
+const angpaoAddress = angpaoServer.address();
+process.env.PAYMENT_PROVIDER_MODE = "angpao";
+process.env.ANGPAO_PHONE = "0812345678";
+process.env.ANGPAO_API_BASE = `http://127.0.0.1:${angpaoAddress.port}/`;
+assert.equal(trueMoney.trueMoneyProviderConfigured(), true, "direct Angpao mode should require a valid receiving phone");
+const directRedeemed = await trueMoney.redeemTrueMoneyVoucher(
+  "https://gift.truemoney.com/campaign/?v=unitvoucher012345678901",
+  "voucher:direct-unit-reference",
+);
+await new Promise((resolve) => angpaoServer.close(resolve));
+assert.equal(directRedeemed.amountBaht, 88.25, "direct Angpao client should return the redeemed amount");
+assert.equal(directRedeemed.transactionId, "angpao-ticket-1", "direct Angpao client should preserve a safe ticket id");
+assert.equal(angpaoRequests[0].method, "POST", "direct Angpao client should redeem with POST");
+assert.match(angpaoRequests[0].url, /unitvoucher012345678901\/redeem$/, "voucher hash should be placed in the redeem path");
+assert.deepEqual(angpaoRequests[0].body, {
+  mobile: "0812345678",
+  voucher_hash: "unitvoucher012345678901",
+}, "direct Angpao request should contain only the receiver and voucher hash");
+if (originalPaymentMode === undefined) delete process.env.PAYMENT_PROVIDER_MODE;
+else process.env.PAYMENT_PROVIDER_MODE = originalPaymentMode;
+if (originalAngpaoPhone === undefined) delete process.env.ANGPAO_PHONE;
+else process.env.ANGPAO_PHONE = originalAngpaoPhone;
+if (originalAngpaoBase === undefined) delete process.env.ANGPAO_API_BASE;
+else process.env.ANGPAO_API_BASE = originalAngpaoBase;
+
 const sanitized = sanitizer.sanitizeReportValue({
   cookie: "_|WARNING:-DO-NOT-SHARE",
   nested: {

@@ -26,6 +26,7 @@ WORKER_API_TOKEN=
 BOT_API_TOKEN=
 BOT_FREE_MODE=true
 PAYMENT_PROVIDER_MODE=placeholder
+ANGPAO_PHONE=
 TRUEMONEY_API_BASE=
 TRUEMONEY_API_TOKEN=
 ```
@@ -76,7 +77,7 @@ Production checklist:
 1. Set Supabase env vars in Vercel.
 2. Set `NEXT_PUBLIC_SITE_URL` to the deployed HTTPS origin.
 3. Set `WORKER_API_BASE` and `WORKER_API_TOKEN` when the external worker is ready.
-4. Keep `PAYMENT_PROVIDER_MODE=placeholder` until TrueMoney live verification is implemented.
+4. Keep `PAYMENT_PROVIDER_MODE=placeholder` until either direct Angpao mode or a live provider is configured.
 5. Run `npm run build` before deploy.
 6. Run `npm run verify:production` from an environment that has the same production env vars.
 

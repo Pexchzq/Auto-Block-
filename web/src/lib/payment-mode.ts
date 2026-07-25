@@ -3,7 +3,11 @@ export function paymentProviderMode(): string {
 }
 
 export function liveTrueMoneyEnabled(): boolean {
-  return ["truemoney", "live"].includes(paymentProviderMode())
+  const mode = paymentProviderMode();
+  if (mode === "angpao") {
+    return /^0\d{9}$/.test(String(process.env.ANGPAO_PHONE || "").replace(/\D/g, ""));
+  }
+  return ["truemoney", "live"].includes(mode)
     && Boolean(
       String(process.env.TRUEMONEY_API_BASE || "").trim()
       && String(process.env.TRUEMONEY_API_TOKEN || "").trim(),
