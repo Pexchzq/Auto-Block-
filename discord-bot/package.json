@@ -10,7 +10,7 @@
     "start": "node src/index.mjs",
     "register": "node scripts/register-commands.mjs",
     "verify:env": "node scripts/verify-env.mjs",
-    "check": "node --check src/index.mjs && node --check src/api.mjs && node --check src/download.mjs && node --check src/ui.mjs",
+    "check": "node --check src/index.mjs && node --check src/api.mjs && node --check src/download.mjs && node --check src/ui.mjs && node --check src/report-summary.mjs",
     "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {

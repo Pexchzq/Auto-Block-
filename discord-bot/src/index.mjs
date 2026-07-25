@@ -14,6 +14,7 @@ import {
 import { createJob, getActiveJobs, getJob, getPaymentStatus, getReport, getUser, topUpWallet } from "./api.mjs";
 import { downloadAccountText } from "./download.mjs";
 import { csvEnv, loadEnv, requiredEnv } from "./env.mjs";
+import { summarizeUnusableAccounts, unusableAccountsFileText, unusableBreakdownField } from "./report-summary.mjs";
 import { safeError } from "./sanitize.mjs";
 import {
   finalEmbed,
@@ -37,9 +38,7 @@ const CONFIG = {
   panelChannelId: String(process.env.DISCORD_PANEL_CHANNEL_ID || "").trim(),
   panelMessageId: String(process.env.DISCORD_PANEL_MESSAGE_ID || "").trim(),
   panelRefreshMs: Math.max(15_000, Number(process.env.DISCORD_PANEL_REFRESH_MS || 30_000)),
-  topUpUrl: String(process.env.DISCORD_TOPUP_URL || "https://auto-block.vercel.app").trim(),
   pollIntervalMs: Math.max(5_000, Number(process.env.POLL_INTERVAL_MS || 10_000)),
-  reportMaxBytes: Math.max(256_000, Number(process.env.DISCORD_REPORT_MAX_BYTES || 7_500_000)),
 };
 
 if (CONFIG.allowedRoleIds.length === 0) {
@@ -139,58 +138,40 @@ async function openSubmission(interaction) {
   await interaction.showModal(submitModal());
 }
 
-function compactReport(job, report, reason) {
-  return {
-    jobId: job.jobId,
-    status: job.status,
-    accountsUsed: job.accountsUsed,
-    directedPairs: job.directedPairs,
-    blocked: job.blocked,
-    alreadyBlocked: job.alreadyBlocked,
-    failed: job.failed,
-    successRate: job.successRate,
-    chargedBaht: job.chargedBaht,
-    refundedBaht: job.refundedBaht,
-    generatedAt: new Date().toISOString(),
-    reportNotice: reason,
-    reportSummary: report && typeof report === "object"
-      ? {
-          command: report.command,
-          durationMs: report.durationMs,
-          rateLimitCount: report.rateLimitCount,
-          topFailureReasons: report.topFailureReasons,
-          recommendation: report.recommendation,
-        }
-      : null,
-  };
+function unusableAccountsAttachment(jobId, unusable) {
+  if (!unusable.length) return null;
+  const buffer = Buffer.from(unusableAccountsFileText(unusable), "utf8");
+  return new AttachmentBuilder(buffer, { name: `ไอดีที่ใช้ไม่ได้-${jobId}.txt` });
 }
 
-function reportAttachment(job, report) {
-  const fullJson = JSON.stringify(report || compactReport(job, null, "No report payload"), null, 2);
-  let buffer = Buffer.from(fullJson, "utf8");
-  if (buffer.byteLength > CONFIG.reportMaxBytes) {
-    buffer = Buffer.from(
-      JSON.stringify(compactReport(job, report, "Full report exceeded Discord attachment limit"), null, 2),
-      "utf8",
-    );
+// Shared by the auto-updating DM monitor AND `/block status` so both surfaces
+// show the same failure breakdown + unusable-accounts file, not just one.
+async function buildJobReportPayload(discordUserId, job) {
+  const isTerminal = TERMINAL_STATUSES.has(job.status);
+  if (!isTerminal) {
+    return { embeds: [statusEmbed(job, "สถานะงาน")], files: [] };
   }
-  return new AttachmentBuilder(buffer, { name: `orions-report-${job.jobId}.json` });
+
+  let report = null;
+  try {
+    const response = await getReport(discordUserId, job.jobId);
+    report = response.report || null;
+  } catch {
+    report = null;
+  }
+
+  const { unusable, breakdown } = summarizeUnusableAccounts(report);
+  const embed = finalEmbed(job);
+  const breakdownField = unusableBreakdownField(breakdown);
+  if (breakdownField) embed.addFields(breakdownField);
+  const attachment = unusableAccountsAttachment(job.jobId, unusable);
+
+  return { embeds: [embed], files: attachment ? [attachment] : [] };
 }
 
 async function finishMonitor(entry, job) {
-  let report = null;
-  try {
-    const response = await getReport(entry.discordUserId, job.jobId);
-    report = response.report || null;
-  } catch (error) {
-    report = compactReport(job, null, `Report lookup failed: ${safeError(error)}`);
-  }
-
-  await entry.message.edit({
-    content: "",
-    embeds: [finalEmbed(job)],
-    files: [reportAttachment(job, report)],
-  });
+  const payload = await buildJobReportPayload(entry.discordUserId, job);
+  await entry.message.edit({ content: "", ...payload });
   monitors.delete(job.jobId);
   void refreshPanel();
 }
@@ -304,7 +285,7 @@ async function showTopUp(interaction) {
     ]);
     await interaction.editReply({
       embeds: [topUpEmbed(user, paymentStatus)],
-      components: topUpComponents(CONFIG.topUpUrl),
+      components: topUpComponents(),
     });
   } catch (error) {
     await interaction.editReply(`อ่านข้อมูลเติมเงินไม่สำเร็จ: ${safeError(error)}`);
@@ -327,7 +308,7 @@ async function handleTopUp(interaction) {
     const user = await getUser(interaction.user.id);
     await interaction.editReply({
       embeds: [topUpResultEmbed(result, user.balanceBaht)],
-      components: topUpComponents(CONFIG.topUpUrl),
+      components: topUpComponents(),
     });
   } catch (error) {
     await interaction.editReply(`เติมเงินไม่สำเร็จ: ${safeError(error)}`);
@@ -348,30 +329,42 @@ async function showStatus(interaction) {
   try {
     const jobId = interaction.options.getString("job_id", true);
     const response = await getJob(interaction.user.id, jobId);
-    await interaction.editReply({ embeds: [statusEmbed(response.job, "สถานะงาน")] });
+    const payload = await buildJobReportPayload(interaction.user.id, response.job);
+    await interaction.editReply(payload);
   } catch (error) {
     await interaction.editReply(`อ่านสถานะไม่สำเร็จ: ${safeError(error)}`);
   }
 }
 
-function queueStats(entries, online = true) {
-  const stats = { online, queued: 0, running: 0, retrying: 0 };
-  for (const entry of entries || []) {
-    const status = String(entry?.job?.status || entry?.status || "");
-    if (status === "queued") stats.queued += 1;
-    if (status === "running") stats.running += 1;
-    if (status === "retrying") stats.retrying += 1;
-  }
-  return stats;
+function jobPercent(job) {
+  const total = Number(job?.directedPairs || 0);
+  if (total <= 0) return 0;
+  const done = Number(job?.blocked || 0) + Number(job?.alreadyBlocked || 0) + Number(job?.failed || 0);
+  return Math.min(100, Math.round((done / total) * 1000) / 10);
 }
 
-async function readQueueStats() {
+async function resolveQueueDisplayName(discordUserId) {
+  const guild = await client.guilds.fetch(CONFIG.guildId).catch(() => null);
+  const member = await guild?.members.fetch(discordUserId).catch(() => null);
+  if (member) return member.displayName;
+  const user = await client.users.fetch(discordUserId).catch(() => null);
+  return user?.globalName || user?.username || discordUserId;
+}
+
+async function readQueuePanelData() {
   try {
     const response = await getActiveJobs();
-    return queueStats(response.jobs || []);
+    const jobs = response.jobs || [];
+    const entries = await Promise.all(jobs.map(async (entry, index) => ({
+      position: index + 1,
+      name: await resolveQueueDisplayName(entry.discordUserId),
+      percent: jobPercent(entry.job),
+      status: String(entry.job?.status || "queued"),
+    })));
+    return { online: true, entries };
   } catch (error) {
     console.error(`Panel queue lookup failed: ${safeError(error)}`);
-    return queueStats([], false);
+    return { online: false, entries: [] };
   }
 }
 
@@ -382,7 +375,7 @@ async function refreshPanel() {
   const message = await channel.messages.fetch(CONFIG.panelMessageId).catch(() => null);
   if (!message) return null;
   await message.edit({
-    embeds: [panelEmbed(await readQueueStats())],
+    embeds: [panelEmbed(await readQueuePanelData(), client.user.displayAvatarURL())],
     components: panelComponents(),
   });
   return message;
@@ -395,13 +388,14 @@ async function installPanel(interaction) {
     await privateReply(interaction, "ไม่พบ text channel สำหรับติดตั้ง control panel");
     return;
   }
-  const stats = await readQueueStats();
+  const stats = await readQueuePanelData();
+  const avatarURL = client.user.displayAvatarURL();
   const existing = CONFIG.panelMessageId
     ? await channel.messages.fetch(CONFIG.panelMessageId).catch(() => null)
     : null;
   const message = existing
-    ? await existing.edit({ embeds: [panelEmbed(stats)], components: panelComponents() })
-    : await channel.send({ embeds: [panelEmbed(stats)], components: panelComponents() });
+    ? await existing.edit({ embeds: [panelEmbed(stats, avatarURL)], components: panelComponents() })
+    : await channel.send({ embeds: [panelEmbed(stats, avatarURL)], components: panelComponents() });
   await privateReply(
     interaction,
     `${existing ? "อัปเดต" : "ติดตั้ง"} Orions panel ใน <#${channel.id}> แล้ว (message: ${message.id})`,
