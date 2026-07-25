@@ -469,10 +469,59 @@ function netLane(key) {
   const laneKey = key || "local";
   let lane = NET_LANES.get(laneKey);
   if (!lane) {
-    lane = { chain: Promise.resolve(), nextBlockAt: 0, rateLimitUntil: 0 };
+    lane = {
+      chain: Promise.resolve(),
+      nextBlockAt: 0,
+      rateLimitUntil: 0,
+      // Per-egress-IP adaptive speed state. Each proxy (or "local") ramps its
+      // own delay up/down independently, so one IP's 429s don't slow the rest.
+      currentDelayMs: null,
+      delayFloorMs: null,
+      delayCeilingMs: null,
+      delayRecentResults: [],
+      delayLastAdjustmentAt: 0,
+      delayHoldUntil: 0,
+      lastSpeedChangeAt: 0,
+      no429Since: 0,
+    };
     NET_LANES.set(laneKey, lane);
   }
   return lane;
+}
+
+function ensureLaneSpeedState(lane, applyOptions) {
+  if (lane.currentDelayMs !== null) return;
+  const now = Date.now();
+  lane.currentDelayMs = applyOptions.globalBlockDelayMs;
+  lane.delayFloorMs = applyOptions.globalBlockDelayFloorMs;
+  lane.delayCeilingMs = Math.max(applyOptions.globalBlockDelayMs + 300, 650);
+  lane.lastSpeedChangeAt = now;
+  lane.no429Since = now;
+}
+
+// A single representative delay value for legacy scalar report fields. Prefers
+// the "local" (no-proxy) lane so single-lane runs report identically to
+// before this change; otherwise picks whichever lane was touched first.
+function representativeLaneDelayMs(fallbackMs) {
+  if (NET_LANES.size === 0) return fallbackMs;
+  const local = NET_LANES.get("local");
+  if (local) return local.currentDelayMs !== null ? local.currentDelayMs : fallbackMs;
+  const [[, firstLane]] = NET_LANES;
+  return firstLane.currentDelayMs !== null ? firstLane.currentDelayMs : fallbackMs;
+}
+
+// Human-readable snapshot of every active egress lane's current pacing delay,
+// e.g. "470ms" for a single (no-proxy) lane, or "local:470ms,proxyA:520ms" once
+// multiple proxies are in play.
+function describeLaneDelays() {
+  if (NET_LANES.size === 0) return `${CONFIG.globalBlockDelayMs}ms`;
+  if (NET_LANES.size === 1) {
+    const [[, lane]] = NET_LANES;
+    return `${lane.currentDelayMs !== null ? lane.currentDelayMs : CONFIG.globalBlockDelayMs}ms`;
+  }
+  return [...NET_LANES.entries()]
+    .map(([key, lane]) => `${key}:${lane.currentDelayMs !== null ? lane.currentDelayMs : CONFIG.globalBlockDelayMs}ms`)
+    .join(",");
 }
 
 function resetNetLanes() {
@@ -598,7 +647,7 @@ function finalizeApplySpeedMetrics(metrics, results, applyOptions) {
   metrics.pairsPerMinute = elapsedMinutes > 0 ? Math.round((results.length / elapsedMinutes) * 10) / 10 : 0;
   metrics.successPairsPerMinute = elapsedMinutes > 0 ? Math.round((successCount / elapsedMinutes) * 10) / 10 : 0;
   metrics.globalDelayStartMs = applyOptions.globalBlockDelayMs;
-  metrics.globalDelayEndMs = CONFIG.globalBlockDelayMs;
+  metrics.globalDelayEndMs = representativeLaneDelayMs(applyOptions.globalBlockDelayMs);
   metrics.globalDelayMinMs = applyOptions.globalBlockDelayFloorMs;
   metrics.speedProfile = applyOptions.applyMode;
   return metrics;
@@ -658,8 +707,9 @@ async function waitForRateLimit(key) {
   }
 }
 
-async function waitForBlockSlot(key) {
+async function waitForBlockSlot(key, applyOptions) {
   const lane = netLane(key);
+  if (applyOptions) ensureLaneSpeedState(lane, applyOptions);
   const previous = lane.chain;
   let release;
   lane.chain = new Promise((resolve) => {
@@ -673,19 +723,27 @@ async function waitForBlockSlot(key) {
     if (waitMs > 0) {
       await sleep(waitMs);
     }
-    lane.nextBlockAt = Date.now() + CONFIG.globalBlockDelayMs;
+    const delayMs = lane.currentDelayMs !== null ? lane.currentDelayMs : CONFIG.globalBlockDelayMs;
+    lane.nextBlockAt = Date.now() + delayMs;
   } finally {
     release();
   }
 }
 
-function recordGlobalDelayChange(reason, oldDelayMs, newDelayMs, details = {}, eventLogger = null) {
+function recordLaneDelayChange(key, lane, reason, oldDelayMs, newDelayMs, details = {}, eventLogger = null) {
   if (oldDelayMs === newDelayMs) return;
-  CONFIG.globalBlockDelayMs = newDelayMs;
+  lane.currentDelayMs = newDelayMs;
   if (ACTIVE_METRICS) {
-    ACTIVE_METRICS.globalDelayEndMs = newDelayMs;
+    ACTIVE_METRICS.laneDelays = ACTIVE_METRICS.laneDelays || {};
+    ACTIVE_METRICS.laneDelays[key] = newDelayMs;
+    // Keep the legacy scalar fields meaningful for single-lane (no-proxy) runs
+    // and as a representative value when multiple proxies are active.
+    ACTIVE_METRICS.globalDelayEndMs = key === "local" || !ACTIVE_METRICS.laneDelays.local
+      ? newDelayMs
+      : ACTIVE_METRICS.globalDelayEndMs;
     const item = {
       at: new Date().toISOString(),
+      laneKey: key,
       reason,
       oldDelayMs,
       newDelayMs,
@@ -696,6 +754,7 @@ function recordGlobalDelayChange(reason, oldDelayMs, newDelayMs, details = {}, e
   if (eventLogger) {
     eventLogger.write({
       type: "speed",
+      laneKey: key,
       reason,
       oldDelayMs,
       newDelayMs,
@@ -1594,7 +1653,16 @@ async function blockUserWithRetry(source, target) {
     if (attempt > 0) {
       await waitForBlockSlot(laneKey);
     }
-    const result = await blockUser(source, target);
+    let result;
+    try {
+      result = await blockUser(source, target);
+    } catch (error) {
+      // A thrown exception (request timeout, socket reset, DNS blip) is just
+      // as transient as a 429/5xx response and deserves the same inline
+      // retry — previously it skipped the retry loop entirely and went
+      // straight to "failed" on the very first hiccup.
+      result = { ok: false, retryable: true, error: sanitizeError(error.message) };
+    }
     if (result.ok) return result;
     last = result;
 
@@ -1760,7 +1828,6 @@ function makeLaneState(group) {
 }
 
 function createAdaptiveController(applyOptions, totalPairs) {
-  const now = Date.now();
   return {
     maxConcurrency: applyOptions.accountConcurrency,
     activeConcurrency: applyOptions.accountConcurrency,
@@ -1773,12 +1840,6 @@ function createAdaptiveController(applyOptions, totalPairs) {
     sawRateLimit: false,
     recoveryMaxConcurrency: applyOptions.applyMode === "balanced" ? Math.min(applyOptions.accountConcurrency, 6) : applyOptions.accountConcurrency,
     windowSize: 24,
-    currentGlobalDelayMs: applyOptions.globalBlockDelayMs,
-    globalDelayFloorMs: applyOptions.globalBlockDelayFloorMs,
-    globalDelayCeilingMs: Math.max(applyOptions.globalBlockDelayMs + 300, 650),
-    lastGlobalSpeedChangeAt: now,
-    globalDelayHoldUntil: 0,
-    no429Since: now,
   };
 }
 
@@ -1805,10 +1866,6 @@ function maybeAdjustAdaptiveController(controller, applyOptions, output) {
   if (ACTIVE_METRICS) {
     ACTIVE_METRICS.recent429Count = recent429;
     ACTIVE_METRICS.recentSuccessCount = recentOk;
-  }
-
-  if (recent429 > 0) {
-    controller.no429Since = now;
   }
 
   let changed = false;
@@ -1873,56 +1930,95 @@ function maybeAdjustAdaptiveController(controller, applyOptions, output) {
     }
   }
   if (changed) controller.lastAdjustmentAt = now;
+}
+
+// Per-egress-IP speed control. Unlike the concurrency controller above (which
+// is shared across the whole run), each proxy lane tracks its own recent
+// results and ramps its own delay up/down — so a 429 storm on one proxy no
+// longer slows down every other proxy's pacing.
+function recordLaneDelayResult(key, result) {
+  const lane = netLane(key);
+  lane.delayRecentResults.push({
+    at: Date.now(),
+    status: result.status,
+    httpStatus: result.httpStatus || null,
+  });
+  if (lane.delayRecentResults.length > 24) {
+    lane.delayRecentResults.shift();
+  }
+}
+
+function maybeAdjustLaneSpeed(key, applyOptions, output, eventLogger) {
+  const lane = netLane(key);
+  ensureLaneSpeedState(lane, applyOptions);
+  const windowSize = 24;
+  if (lane.delayRecentResults.length < Math.min(8, windowSize)) return;
+  const now = Date.now();
+  if (now - lane.delayLastAdjustmentAt < 5000) return;
+
+  const recent429 = lane.delayRecentResults.filter((item) => item.httpStatus === 429).length;
+  const recentOk = lane.delayRecentResults.filter(
+    (item) => item.status === "blocked" || item.status === "skipped_existing_api",
+  ).length;
+
+  if (recent429 > 0) {
+    lane.no429Since = now;
+  }
 
   let speedChanged = false;
   if (recent429 >= applyOptions.speed429Threshold) {
-    const oldDelay = CONFIG.globalBlockDelayMs;
+    const oldDelay = lane.currentDelayMs;
     const nextDelay = Math.min(
-      controller.globalDelayCeilingMs,
+      lane.delayCeilingMs,
       Math.max(oldDelay + CONFIG.globalDelayRecoveryStepMs, applyOptions.globalBlockDelayMs),
     );
-    controller.globalDelayHoldUntil = now + applyOptions.globalDelayHoldMs;
-    controller.no429Since = now;
+    lane.delayHoldUntil = now + applyOptions.globalDelayHoldMs;
+    lane.no429Since = now;
     if (nextDelay !== oldDelay) {
-      recordGlobalDelayChange(
+      recordLaneDelayChange(
+        key,
+        lane,
         "rate_limit_rollback",
         oldDelay,
         nextDelay,
         {
           recent429,
           recentOk,
-          holdUntil: new Date(controller.globalDelayHoldUntil).toISOString(),
+          holdUntil: new Date(lane.delayHoldUntil).toISOString(),
         },
-        controller.eventLogger,
+        eventLogger,
       );
-      output.log(`[speed] rollback globalDelay=${nextDelay}ms recent429=${recent429}`);
+      output.log(`[speed:${key}] rollback delay=${nextDelay}ms recent429=${recent429}`);
       speedChanged = true;
     }
   } else if (
     recent429 === 0 &&
-    recentOk >= Math.floor(controller.windowSize * 0.8) &&
-    CONFIG.globalBlockDelayMs > controller.globalDelayFloorMs &&
-    now >= controller.globalDelayHoldUntil &&
-    now - controller.no429Since >= applyOptions.globalDelayStableWindowMs &&
-    now - controller.lastGlobalSpeedChangeAt >= 30000
+    recentOk >= Math.floor(windowSize * 0.8) &&
+    lane.currentDelayMs > lane.delayFloorMs &&
+    now >= lane.delayHoldUntil &&
+    now - lane.no429Since >= applyOptions.globalDelayStableWindowMs &&
+    now - lane.lastSpeedChangeAt >= 30000
   ) {
-    const oldDelay = CONFIG.globalBlockDelayMs;
-    const nextDelay = Math.max(controller.globalDelayFloorMs, oldDelay - CONFIG.globalDelayStepMs);
-    recordGlobalDelayChange(
+    const oldDelay = lane.currentDelayMs;
+    const nextDelay = Math.max(lane.delayFloorMs, oldDelay - CONFIG.globalDelayStepMs);
+    recordLaneDelayChange(
+      key,
+      lane,
       "stable_speedup",
       oldDelay,
       nextDelay,
       {
         recent429,
         recentOk,
-        stableForMs: now - controller.no429Since,
+        stableForMs: now - lane.no429Since,
       },
-      controller.eventLogger,
+      eventLogger,
     );
-    output.log(`[speed] speedup globalDelay=${nextDelay}ms stableFor=${Math.round((now - controller.no429Since) / 1000)}s`);
+    output.log(`[speed:${key}] speedup delay=${nextDelay}ms stableFor=${Math.round((now - lane.no429Since) / 1000)}s`);
     speedChanged = true;
   }
-  if (speedChanged) controller.lastGlobalSpeedChangeAt = now;
+  if (speedChanged) lane.lastSpeedChangeAt = now;
+  lane.delayLastAdjustmentAt = now;
 }
 
 function pruneSourceWindow(lane, now, applyOptions) {
@@ -2050,6 +2146,7 @@ async function applyOnePair(pair, output, applyOptions, eventLogger, context = {
         status: report.status,
         httpStatus: report.httpStatus || null,
         retryable: Boolean(report.retryable),
+        error: report.error || null,
         durationMs,
         activeConcurrency: context.activeConcurrency,
         activeLanes: context.activeLanes,
@@ -2059,7 +2156,7 @@ async function applyOnePair(pair, output, applyOptions, eventLogger, context = {
   }
 
   try {
-    await waitForBlockSlot(pair.source.proxy || "local");
+    await waitForBlockSlot(pair.source.proxy || "local", applyOptions);
     const result = await blockUserWithRetry(pair.source, pair.target);
     if (result.ok && result.alreadyBlocked) {
       pair.status = "skipped_existing_api";
@@ -2178,7 +2275,7 @@ async function runApplyLanes(pairs, output, applyOptions, cancelToken, eventLogg
     const failed = results.filter((item) => item.status === "failed").length;
     const rate429 = results.filter((item) => item.httpStatus === 429).length;
     const pct = totalPendingPairs > 0 ? ((done / totalPendingPairs) * 100).toFixed(1) : "100.0";
-    const line = `[progress] ${done}/${totalPendingPairs} (${pct}%) ok=${blocked} already=${already} failed=${failed} 429=${rate429} speed=${ratePerMin.toFixed(1)}/min eta=${formatDuration(etaMs)} active=${controller.activeConcurrency} lanes=${lanes.filter((lane) => !lane.blocked && lane.queue.length > 0).length} globalDelay=${CONFIG.globalBlockDelayMs}ms`;
+    const line = `[progress] ${done}/${totalPendingPairs} (${pct}%) ok=${blocked} already=${already} failed=${failed} 429=${rate429} speed=${ratePerMin.toFixed(1)}/min eta=${formatDuration(etaMs)} active=${controller.activeConcurrency} lanes=${lanes.filter((lane) => !lane.blocked && lane.queue.length > 0).length} globalDelay=${describeLaneDelays()}`;
     const thaiLine = `   สรุปสด: บล็อกแล้ว ${blocked} | ซ้ำ ${already} | พลาด ${failed} | ติดลิมิต ${rate429} | เหลือ ${remaining} คู่ | ${ratePerMin.toFixed(0)}/นาที | อีก ~${formatDuration(etaMs)} (${pct}%)`;
     if (applyOptions.progressOnly) {
       process.stderr.write(`${line}\n${thaiLine}\n`);
@@ -2279,12 +2376,20 @@ async function runApplyLanes(pairs, output, applyOptions, cancelToken, eventLogg
       }),
     ]);
 
-    for (const result of batchResults) {
+    const touchedLaneKeys = new Set();
+    for (let index = 0; index < batchResults.length; index += 1) {
+      const result = batchResults[index];
+      const laneKey = batch[index]?.pair?.source?.proxy || "local";
       results.push(result);
       recordAdaptiveResult(controller, result);
+      recordLaneDelayResult(laneKey, result);
+      touchedLaneKeys.add(laneKey);
     }
     printProgress(false);
     maybeAdjustAdaptiveController(controller, applyOptions, output);
+    for (const laneKey of touchedLaneKeys) {
+      maybeAdjustLaneSpeed(laneKey, applyOptions, output, eventLogger);
+    }
   }
 
   // Never let queued pairs vanish. If a lane was retired (auth strikes) its
@@ -2926,7 +3031,8 @@ async function commandApply(args) {
       perAccountDelayMinMs: applyOptions.perAccountDelayMinMs,
       perAccountDelayMaxMs: applyOptions.perAccountDelayMaxMs,
       globalBlockDelayStartMs: applyOptions.globalBlockDelayMs,
-      globalBlockDelayEndMs: CONFIG.globalBlockDelayMs,
+      globalBlockDelayEndMs: representativeLaneDelayMs(applyOptions.globalBlockDelayMs),
+      laneDelaysEndMs: Object.fromEntries([...NET_LANES.entries()].map(([key, lane]) => [key, lane.currentDelayMs !== null ? lane.currentDelayMs : applyOptions.globalBlockDelayMs])),
       globalBlockDelayFloorMs: applyOptions.globalBlockDelayFloorMs,
       speedProfile: applyOptions.applyMode,
       targetCooldownMs: applyOptions.targetCooldownMs,
@@ -3054,7 +3160,8 @@ async function commandRetryFailed(args) {
       perAccountDelayMinMs: applyOptions.perAccountDelayMinMs,
       perAccountDelayMaxMs: applyOptions.perAccountDelayMaxMs,
       globalBlockDelayStartMs: applyOptions.globalBlockDelayMs,
-      globalBlockDelayEndMs: CONFIG.globalBlockDelayMs,
+      globalBlockDelayEndMs: representativeLaneDelayMs(applyOptions.globalBlockDelayMs),
+      laneDelaysEndMs: Object.fromEntries([...NET_LANES.entries()].map(([key, lane]) => [key, lane.currentDelayMs !== null ? lane.currentDelayMs : applyOptions.globalBlockDelayMs])),
       globalBlockDelayFloorMs: applyOptions.globalBlockDelayFloorMs,
       speedProfile: applyOptions.applyMode,
       targetCooldownMs: applyOptions.targetCooldownMs,
@@ -3191,6 +3298,7 @@ module.exports = {
   redactProxy,
   loadProxies,
   assignProxies,
+  makeProxyAgent,
   commandValidate,
   commandPlan,
   commandSimulate,
@@ -3198,4 +3306,11 @@ module.exports = {
   commandRetryFailed,
   commandStatus,
   latestReportPath,
+  // Internal, exposed for testing per-egress-lane pacing isolation.
+  NET_LANES,
+  netLane,
+  resetNetLanes,
+  recordLaneDelayResult,
+  maybeAdjustLaneSpeed,
+  normalizeApplyOptions,
 };

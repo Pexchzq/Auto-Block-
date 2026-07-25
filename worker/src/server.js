@@ -120,17 +120,30 @@ function normalizePairCounters(input, includeUnaccounted) {
 
 function sanitizeReport(report, fallback) {
   const sanitized = sanitizeReportValue(report || {});
-  const directedPairs = Number(sanitized.directedPairs ?? fallback.directedPairs ?? 0);
+  // block-mesh.js nests every counter under `summary` — there is no top-level
+  // blocked/alreadyBlocked/failed on the report. Reading them off `sanitized`
+  // directly always yielded 0, so the residual math below ("unaccounted for
+  // = failed") swallowed every real success into the failed bucket on every
+  // completed job, not just ones with an actually-missing report.
+  const summary = sanitized.summary && typeof sanitized.summary === "object" ? sanitized.summary : {};
+  const directedPairs = Number(summary.directedPairs ?? sanitized.directedPairs ?? fallback.directedPairs ?? 0);
+  // skipped_existing_api / skipped_existing / skipped_known_success all mean
+  // "no block call needed, target is already blocked" (incl. via the local
+  // pair-success cache) — none of these are failures.
+  const alreadyBlocked =
+    nonNegativeInteger(summary.alreadyBlockedFromApi) +
+    nonNegativeInteger(summary.skippedExisting) +
+    nonNegativeInteger(summary.skippedKnownSuccess);
   const counters = normalizePairCounters({
     directedPairs,
-    blocked: sanitized.blocked,
-    alreadyBlocked: sanitized.alreadyBlocked ?? sanitized.already_blocked,
-    failed: sanitized.failed,
+    blocked: summary.blocked,
+    alreadyBlocked,
+    failed: summary.failed,
   }, true);
   const safe = {
     ...sanitized,
     jobId: fallback.jobId,
-    accountsUsed: Number(sanitized.accountsUsed ?? sanitized.parsedAccounts ?? fallback.accountCount ?? 0),
+    accountsUsed: Number(sanitized.accountsUsed ?? summary.parsedAccounts ?? fallback.accountCount ?? 0),
     directedPairs,
     ...counters,
     generatedAt: sanitized.generatedAt || new Date().toISOString(),
@@ -173,6 +186,17 @@ async function newestReport(reportsDir) {
   const latest = candidates.at(-1);
   if (!latest?.text) return null;
   return JSON.parse(latest.text);
+}
+
+// block-mesh.js resolves its own report directory from its own file location
+// (or the packaged exe's location), not from the spawned `cwd`. When
+// BLOCKMESH_SCRIPT points at a shared script file (the common case), the CLI
+// writes reports next to that script, not into the per-job workspace we
+// create. Fall back to that shared location. Safe because concurrency is
+// hardcoded to 1 above, so at most one job's report can ever be "newest".
+function cliOwnReportsDir() {
+  const anchor = CONFIG.cliScript || CONFIG.cliExe;
+  return path.join(path.dirname(anchor), "reports");
 }
 
 function updateCountersFromLine(job, line) {
@@ -276,7 +300,10 @@ async function runJob(job) {
       return;
     }
 
-    const report = await newestReport(path.join(job.workspace, "reports")).catch(() => null);
+    let report = await newestReport(path.join(job.workspace, "reports")).catch(() => null);
+    if (!report) {
+      report = await newestReport(cliOwnReportsDir()).catch(() => null);
+    }
     const safeReport = sanitizeReport(report || {}, job);
     if (!report && code !== 0) {
       safeReport.failed = Math.max(Number(safeReport.failed || 0), job.directedPairs - Number(safeReport.blocked || 0) - Number(safeReport.alreadyBlocked || 0));
